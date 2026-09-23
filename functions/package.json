@@ -1,0 +1,25 @@
+{
+  "name": "weather-alerts-functions",
+  "description": "Server-side rules port + scheduled alert pipeline + push routing for Weather Alerts (Phases 8, 10, 12). Mirrors lib/services/weather_analysis/ verbatim.",
+  "engines": {
+    "node": "20"
+  },
+  "main": "lib/src/index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "npm run build && node --test lib/test/rules.test.js lib/test/server_alerts.test.js lib/test/push_router.test.js",
+    "lint": "gts lint",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.1.0",
+    "firebase-functions": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "gts": "^5.3.0",
+    "typescript": "^5.4.5"
+  },
+  "private": true
+}

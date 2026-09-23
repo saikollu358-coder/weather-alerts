@@ -1,0 +1,14 @@
+# Copy this file to android/key.properties (gitignored) and fill in the values
+# to sign release builds. Generate a keystore first, e.g.:
+#
+#   keytool -genkey -v -keystore weather_alerts-release.jks \
+#     -alias weather_alerts -keyalg RSA -keysize 2048 -validity 10000
+#
+# Then place the .jks file somewhere outside the repo and point storeFile at it.
+# If this file is missing, release builds fall back to debug signing (fine for
+# CI, NOT acceptable for a store release).
+
+storeFile=../weather_alerts-release.jks
+storePassword=CHANGE_ME
+keyAlias=weather_alerts
+keyPassword=CHANGE_ME

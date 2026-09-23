@@ -1,0 +1,67 @@
+rules_version = '2';
+
+// Strict, least-privilege rules.
+//
+// - A user may only read/write their own private data under /users/{uid}.
+// - Server-controlled alert information (cloud-generated alerts and official
+//   warnings) is read-only for clients: writes require the Firebase Admin SDK
+//   (Cloud Functions). Clients can never fabricate or tamper with alert data.
+// - No public/tenant data is readable without auth.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // -----------------------------------------------------------------
+    // User-private data.
+    // -----------------------------------------------------------------
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if isOwner(uid);
+
+      match /{document=**} {
+        allow read: if isOwner(uid);
+        allow write: if isOwner(uid);
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Server-generated alerts (Cloud Functions only).
+    // -----------------------------------------------------------------
+    match /server_alerts/{alertId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------
+    // Push delivery tracking (Cloud Functions only).
+    // -----------------------------------------------------------------
+    match /notification_deliveries/{key} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------
+    // Official warnings / authoritative bulletins published server-side.
+    // -----------------------------------------------------------------
+    match /official_warnings/{warningId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------
+    // Public reference data used for validation (parity, zip, stations).
+    // Read-only for everyone; written only by server.
+    // -----------------------------------------------------------------
+    match /public/{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

@@ -1,0 +1,94 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:weather_alerts/app.dart';
+import 'package:weather_alerts/core/constants/app_constants.dart';
+import 'package:weather_alerts/data/repositories/local_repository_providers.dart';
+import 'package:weather_alerts/features/authentication/application/auth_providers.dart';
+import 'package:weather_alerts/features/authentication/application/auth_state.dart';
+import 'package:weather_alerts/domain/entities/auth_user.dart';
+import 'package:weather_alerts/domain/enums/location_permission.dart';
+import 'package:weather_alerts/services/location/location_service_providers.dart';
+import 'package:weather_alerts/services/weather/weather_service_providers.dart';
+
+import '../helpers/fakes.dart';
+import '../helpers/pipeline_fakes.dart';
+
+void main() {
+  group('App boot', () {
+    testWidgets('boots into the splash screen while auth resolves',
+        (tester) async {
+      await tester.pumpWidget(const ProviderScope(child: WeatherAlertsApp()));
+
+      expect(find.text(AppConstants.appName), findsOneWidget);
+      expect(find.text(AppConstants.tagline), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('redirects unauthenticated users to login', (tester) async {
+      final auth = FakeAuthRepository();
+      addTearDown(auth.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [authRepositoryProvider.overrideWith((ref) => auth)],
+          child: const WeatherAlertsApp(),
+        ),
+      );
+      auth.emit(null);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Welcome back'), findsOneWidget);
+      expect(find.byKey(const ValueKey('login_email')), findsOneWidget);
+    });
+
+    testWidgets('authenticated users land on the dashboard', (tester) async {
+      final user = const AuthUser(uid: 'u1', email: 'u@example.com');
+      final auth = FakeAuthRepository(user: user);
+      addTearDown(auth.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWith((ref) => auth),
+            monitoredLocationRepositoryProvider.overrideWith(
+              (ref) => InMemoryMonitoredLocations(),
+            ),
+            alertHistoryRepositoryProvider.overrideWith(
+              (ref) => InMemoryAlertHistory(),
+            ),
+            weatherServiceProvider.overrideWith((ref) => FakeWeatherService()),
+            locationServiceProvider.overrideWith(
+              (ref) =>
+                  FakeLocationService(permission: LocationPermissionStatus.denied),
+            ),
+          ],
+          child: const WeatherAlertsApp(),
+        ),
+      );
+      auth.emit(user);
+      await tester.pumpAndSettle();
+
+      // The post-auth shell renders the home tab with the add-location flow.
+      expect(find.text('Weather'), findsWidgets);
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.text('Add a location to start'), findsOneWidget);
+    });
+
+    test('AuthState helpers', () {
+      expect(const AuthState.unknown().isLoading, isTrue);
+      expect(
+        const AuthState.authenticated(
+          AuthUser(uid: 'u', email: 'e'),
+        ).isAuthenticated,
+        isTrue,
+      );
+      expect(
+        const AuthState.authenticated(
+          AuthUser(uid: 'local-guest', isLocalGuest: true),
+        ).usesCloudAccount,
+        isFalse,
+      );
+      expect(const AuthState.unauthenticated().isAuthenticated, isFalse);
+    });
+  });
+}
