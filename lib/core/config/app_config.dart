@@ -11,7 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 ///   WEATHER_ALERTS_ENV                 dev | stage | prod (default: dev)
 ///   WEATHER_ALERTS_WEATHER_API_BASE    Open-Meteo API base URL (default provided)
 ///   WEATHER_ALERTS_GEOCODING_API_BASE  Open-Meteo geocoding base URL
-///   WEATHER_ALERTS_GOOGLE_MAPS_API_KEY Google Maps API key (Android/web)
+///   WEATHER_ALERTS_OPENWEATHER_API_KEY  OpenWeatherMap key (optional, paid) for weather map layers
 ///   WEATHER_ALERTS_LOGGING             true | false (default: true)
 ///   FIREBASE_WEB_API_KEY               Firebase web API key
 ///   FIREBASE_WEB_AUTH_DOMAIN           Firebase web auth domain
@@ -24,7 +24,7 @@ class AppConfig {
     required this.environment,
     required this.weatherApiBaseUrl,
     required this.geocodingApiBaseUrl,
-    required this.googleMapsApiKey,
+    required this.openWeatherApiKey,
     required this.loggingEnabled,
     required this.firebaseWebApiKey,
     required this.firebaseWebAuthDomain,
@@ -42,7 +42,7 @@ class AppConfig {
       : environment = _kEnvironment,
         weatherApiBaseUrl = _kWeatherApiBaseUrl,
         geocodingApiBaseUrl = _kGeocodingApiBaseUrl,
-        googleMapsApiKey = _kGoogleMapsApiKey,
+        openWeatherApiKey = _kOpenWeatherApiKey,
         loggingEnabled = _kLoggingEnabled,
         firebaseWebApiKey = _kFirebaseWebApiKey,
         firebaseWebAuthDomain = _kFirebaseWebAuthDomain,
@@ -66,8 +66,8 @@ class AppConfig {
     defaultValue: 'https://geocoding-api.open-meteo.com/v1',
   );
 
-  static const String _kGoogleMapsApiKey = String.fromEnvironment(
-    'WEATHER_ALERTS_GOOGLE_MAPS_API_KEY',
+  static const String _kOpenWeatherApiKey = String.fromEnvironment(
+    'WEATHER_ALERTS_OPENWEATHER_API_KEY',
   );
 
   static const bool _kLoggingEnabled = String.fromEnvironment(
@@ -103,8 +103,10 @@ class AppConfig {
   /// Base URL of the weather provider geocoding/search endpoint.
   final String geocodingApiBaseUrl;
 
-  /// Google Maps API key, supplied at build time. Empty when not configured.
-  final String googleMapsApiKey;
+  /// OpenWeatherMap API key for optional (paid) weather map tile layers such
+  /// as temperature and wind. Empty when not configured; radar tiles from
+  /// RainViewer do not require a key.
+  final String openWeatherApiKey;
 
   /// Whether diagnostic logging is enabled. Always false in production.
   final bool loggingEnabled;

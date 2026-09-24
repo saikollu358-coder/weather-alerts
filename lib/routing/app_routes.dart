@@ -7,6 +7,7 @@ abstract final class RoutePath {
   RoutePath._();
 
   static const String splash = '/';
+  static const String localMode = '/local-mode';
   static const String login = '/login';
   static const String register = '/register';
   static const String forgotPassword = '/forgot-password';
@@ -26,6 +27,7 @@ abstract final class RouteName {
   RouteName._();
 
   static const String splash = 'splash';
+  static const String localMode = 'local-mode';
   static const String login = 'login';
   static const String register = 'register';
   static const String forgotPassword = 'forgot-password';

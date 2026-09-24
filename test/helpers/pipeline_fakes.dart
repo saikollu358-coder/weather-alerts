@@ -64,6 +64,10 @@ class FakeLocationService implements LocationService {
   bool openAppSettingsResult = true;
   int startLikeCalls = 0;
 
+  /// When true, [requestPermission] flips [permission] to granted, letting
+  /// tests simulate the OS prompt being accepted on the first attempt.
+  bool grantOnRequest = false;
+
   @override
   Future<bool> isServiceEnabled() async => serviceEnabled;
 
@@ -71,7 +75,10 @@ class FakeLocationService implements LocationService {
   Future<LocationPermissionStatus> permissionStatus() async => permission;
 
   @override
-  Future<LocationPermissionStatus> requestPermission() async => permission;
+  Future<LocationPermissionStatus> requestPermission() async {
+    if (grantOnRequest) permission = LocationPermissionStatus.granted;
+    return permission;
+  }
 
   @override
   Future<bool> openAppSettings() async => openAppSettingsResult;

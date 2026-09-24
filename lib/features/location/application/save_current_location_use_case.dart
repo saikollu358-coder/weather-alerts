@@ -61,6 +61,8 @@ class SaveCurrentLocationUseCase {
       logger.warning(
           'SaveCurrentLocationUseCase', 'reverse geocode failed: ${e.runtimeType}');
     }
-    return 'Current location';
+    // Derive a coordinate-based label straight from the fix so the location is
+    // still traceable to its geographic coordinates when no place resolves.
+    return '${geo.latitude.toStringAsFixed(3)}, ${geo.longitude.toStringAsFixed(3)}';
   }
 }

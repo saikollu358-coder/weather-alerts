@@ -6,6 +6,8 @@ import 'package:weather_alerts/domain/enums/location_permission.dart';
 import 'package:weather_alerts/features/alerts/application/alerts_providers.dart';
 import 'package:weather_alerts/features/dashboard/application/dashboard_providers.dart';
 import 'package:weather_alerts/features/dashboard/application/dashboard_state.dart';
+import 'package:weather_alerts/features/location/application/location_providers.dart';
+import 'package:weather_alerts/features/location/application/location_state.dart';
 
 import '../helpers/pipeline_fakes.dart';
 
@@ -141,12 +143,110 @@ void main() {
             DashboardStatus.ready,
       );
       final state = container.read(dashboardControllerProvider);
-      expect(state.location?.name, 'Current location');
+      expect(state.location?.name, '42.360, -71.050');
       expect(weather.lastLocationKey, saved.locationKey);
 
       final persisted = await locations.allLocations();
       expect(persisted.length, 1);
       expect(persisted.single.isPrimary, isTrue);
+    });
+
+    test('promptForCurrentLocation resolves permission without saving',
+        () async {
+      final location = FakeLocationService(
+        fix: geoPosition(42.36, -71.05),
+        permission: LocationPermissionStatus.granted,
+      );
+      final locations = InMemoryMonitoredLocations();
+      final container = makePipelineContainer(
+        location: location,
+        locations: locations,
+      );
+      addTearDown(container.dispose);
+
+      final granted = await container
+          .read(dashboardControllerProvider.notifier)
+          .promptForCurrentLocation();
+
+      expect(granted, isTrue);
+      final locationState = container.read(locationControllerProvider);
+      expect(locationState.status, LocationStatus.ready);
+      expect(locationState.position?.latitude, 42.36);
+      expect((await locations.allLocations()), isEmpty);
+    });
+
+    test('promptForCurrentLocation surfaces a denial without saving',
+        () async {
+      final location = FakeLocationService(
+        permission: LocationPermissionStatus.denied,
+      );
+      final locations = InMemoryMonitoredLocations();
+      final container = makePipelineContainer(
+        location: location,
+        locations: locations,
+      );
+      addTearDown(container.dispose);
+
+      final granted = await container
+          .read(dashboardControllerProvider.notifier)
+          .promptForCurrentLocation();
+
+      expect(granted, isFalse);
+      final locationState = container.read(locationControllerProvider);
+      expect(locationState.status, LocationStatus.denied);
+      expect((await locations.allLocations()), isEmpty);
+    });
+
+    test(
+        'useCurrentGps requests permission when denied and saves once granted',
+        () async {
+      final location = FakeLocationService(
+        fix: geoPosition(42.36, -71.05),
+        permission: LocationPermissionStatus.denied,
+      )..grantOnRequest = true;
+      final weather = FakeWeatherService(
+        bundle: sampleBundle(locationKey: '42.36,-71.05'),
+      );
+      final locations = InMemoryMonitoredLocations();
+      final container = makePipelineContainer(
+        weather: weather,
+        location: location,
+        locations: locations,
+      );
+      addTearDown(container.dispose);
+
+      final saved = await container
+          .read(dashboardControllerProvider.notifier)
+          .useCurrentGps();
+
+      expect(saved, isNotNull);
+      final locationState = container.read(locationControllerProvider);
+      expect(locationState.status, LocationStatus.ready);
+      final persisted = await locations.allLocations();
+      expect(persisted.length, 1);
+      expect(persisted.single.isPrimary, isTrue);
+      expect(persisted.single.name, '42.360, -71.050');
+    });
+
+    test('useCurrentGps saves nothing when permission stays denied', () async {
+      final location = FakeLocationService(
+        permission: LocationPermissionStatus.denied,
+      );
+      final locations = InMemoryMonitoredLocations();
+      final container = makePipelineContainer(
+        location: location,
+        locations: locations,
+      );
+      addTearDown(container.dispose);
+
+      final saved = await container
+          .read(dashboardControllerProvider.notifier)
+          .useCurrentGps();
+
+      expect(saved, isNull);
+      final locationState = container.read(locationControllerProvider);
+      expect(locationState.status, LocationStatus.denied);
+      expect((await locations.allLocations()), isEmpty);
     });
 
     test('refresh forwards forceRefresh to the weather service', () async {

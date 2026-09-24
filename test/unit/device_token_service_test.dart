@@ -128,9 +128,12 @@ void main() {
     late InMemoryPreferences preferences;
 
     DeviceTokenService buildService() {
+      // The local guest must be explicitly activated (startLocalGuest) before
+      // the offline session counts as "signed in".
+      final localAuth = LocalAuthService()..startLocalGuest();
       return DeviceTokenService(
         fcm: fcm,
-        auth: LocalAuthService(),
+        auth: localAuth,
         deviceTokens: repo,
         locations: locations,
         preferences: preferences,

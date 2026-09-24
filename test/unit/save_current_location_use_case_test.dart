@@ -188,13 +188,13 @@ void main() {
     expect(saved.name, 'New York, New York, United States');
   });
 
-  test('falls back to a generic name when reverse geocoding has no result',
+  test('falls back to a coordinates label when reverse geocoding has no result',
       () async {
     final useCase = build(geocoding: FakeGeocodingService());
 
     final saved = await useCase.run();
 
-    expect(saved.name, 'Current location');
+    expect(saved.name, '40.713, -74.006');
   });
 
   test('falls back gracefully when reverse geocoding fails', () async {
@@ -204,7 +204,7 @@ void main() {
 
     final saved = await useCase.run();
 
-    expect(saved.name, 'Current location');
+    expect(saved.name, '40.713, -74.006');
   });
 
   test('surfaces duplicate-coordinate rejection from the repository', () async {

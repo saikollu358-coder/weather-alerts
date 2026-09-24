@@ -4,6 +4,8 @@ import '../../../core/errors/app_exception.dart';
 import '../../../core/utils/logger.dart';
 import '../../../data/repositories/local_repository_providers.dart';
 import '../../../domain/entities/monitored_location_record.dart';
+import '../../../domain/enums/location_permission.dart';
+import '../../../services/location/location_service_providers.dart';
 import '../../../services/weather_analysis/weather_analysis.dart';
 import '../../alerts/application/alerts_providers.dart';
 import '../../location/application/location_providers.dart';
@@ -60,12 +62,56 @@ class DashboardController extends Notifier<DashboardState> {
     }
   }
 
+  /// Onboarding entry point shown right after sign-in when no location exists
+  /// yet: requests location permission (without saving anything) so the app can
+  /// show the exact current position on the map. Saving still happens through
+  /// [useCurrentGps].
+  ///
+  /// Returns true when location access was granted/resolved. On grant the home
+  /// panel can offer "Use my current GPS location" and the Locations map shows
+  /// the live fix.
+  Future<bool> promptForCurrentLocation() async {
+    final controller = ref.read(locationControllerProvider.notifier);
+    final service = ref.read(locationServiceProvider);
+    try {
+      if (await service.permissionStatus() ==
+          LocationPermissionStatus.granted) {
+        await controller.start();
+        return ref.read(locationControllerProvider).isReady;
+      }
+    } catch (e) {
+      ref.read(appLoggerProvider).warning(
+          'DashboardController', 'permission check failed: ${e.runtimeType}');
+    }
+    return controller.requestPermission();
+  }
+
   /// Starts the GPS permission flow and, when a fix is available, saves and
   /// selects the current position. Returns the saved location, or null when
   /// the user still needs to grant permission (watch `locationController`).
+  ///
+  /// When permission is not yet granted this explicitly triggers the OS/browser
+  /// permission prompt (so "Add current location" always asks), then captures
+  /// an accurate device fix. Saving also reverse-geocodes the place name from
+  /// the returned coordinates (see `SaveCurrentLocationUseCase`).
   Future<MonitoredLocationRecord?> useCurrentGps({String? name}) async {
     final location = ref.read(locationControllerProvider.notifier);
-    await location.start();
+    final service = ref.read(locationServiceProvider);
+    try {
+      final permission = await service.permissionStatus();
+      switch (permission) {
+        case LocationPermissionStatus.granted:
+          await location.start();
+        case LocationPermissionStatus.denied:
+          if (!await location.requestPermission()) return null;
+        case LocationPermissionStatus.deniedForever:
+          return null;
+      }
+    } catch (e) {
+      ref.read(appLoggerProvider).warning(
+          'DashboardController', 'permission check failed: ${e.runtimeType}');
+      return null;
+    }
     final status = ref.read(locationControllerProvider).status;
     if (status != LocationStatus.ready) return null;
     return _saveAndSelectCurrent(name: name);

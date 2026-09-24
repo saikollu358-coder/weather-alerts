@@ -10,6 +10,15 @@ import '../../../services/firebase/local_auth_service.dart';
 import 'auth_controller.dart';
 import 'auth_state.dart';
 
+/// Shared instance of the offline/local auth backend.
+///
+/// Kept as a singleton so the [LocalModeScreen] gate can opt the user into the
+/// guest session through the exact service the [authControllerProvider] listens
+/// to.
+final localAuthServiceProvider = Provider<LocalAuthService>(
+  (ref) => LocalAuthService(),
+);
+
 /// Selects the auth backend: Firebase when configured, otherwise a
 /// deterministic local/offline session.
 final authServiceProvider = Provider<AuthService>((ref) {
@@ -20,8 +29,17 @@ final authServiceProvider = Provider<AuthService>((ref) {
       logger: ref.watch(appLoggerProvider),
     );
   }
-  return LocalAuthService();
+  return ref.watch(localAuthServiceProvider);
 });
+
+/// Whether a cloud (Firebase) sign-in backend is available in this build.
+///
+/// The router uses this to decide between the login flow (cloud available) and
+/// the local-mode gate (cloud unavailable), so a build without Firebase never
+/// silently skips the login page.
+final cloudAuthAvailableProvider = Provider<bool>(
+  (ref) => ref.watch(authServiceProvider).isAvailable,
+);
 
 /// Data-layer boundary between the controller UI and the auth backend.
 final authRepositoryProvider = Provider<AuthRepository>(

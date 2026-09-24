@@ -60,6 +60,36 @@ void main() {
       expect((await locations.allLocations()).any((r) => r.id == 2), isFalse);
     });
 
+    test('rename updates the saved name', () async {
+      final locations = InMemoryMonitoredLocations(seed: [
+        sampleLocation(id: 1, name: 'Testville', isPrimary: true),
+      ]);
+      final container = makePipelineContainer(locations: locations);
+      addTearDown(container.dispose);
+
+      await container
+          .read(locationsControllerProvider.notifier)
+          .rename(1, ' Home ');
+
+      expect(container.read(locationsControllerProvider).locations.single.name,
+          'Home');
+      expect((await locations.locationById(1))!.name, 'Home');
+    });
+
+    test('rename ignores blank and unchanged names', () async {
+      final locations = InMemoryMonitoredLocations(seed: [
+        sampleLocation(id: 1, name: 'Testville', isPrimary: true),
+      ]);
+      final container = makePipelineContainer(locations: locations);
+      addTearDown(container.dispose);
+
+      await container.read(locationsControllerProvider.notifier).rename(1, '  ');
+      expect((await locations.locationById(1))!.name, 'Testville');
+
+      await container.read(locationsControllerProvider.notifier).rename(1, 'Testville');
+      expect((await locations.locationById(1))!.name, 'Testville');
+    });
+
     test('surfaces an error state when the repository throws', () async {
       final locations = InMemoryMonitoredLocations()..failLoads = true;
       final container = makePipelineContainer(locations: locations);

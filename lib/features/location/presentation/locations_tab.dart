@@ -150,6 +150,7 @@ class _LocationsTabState extends ConsumerState<LocationsTab> {
                 onSetPrimary: () => ref
                     .read(locationsControllerProvider.notifier)
                     .setPrimary(record.id!),
+                onRename: () => _promptRename(context, record),
                 onRemove: () async {
                   final id = record.id!;
                   final confirmed = await _confirmRemove(context);
@@ -220,6 +221,47 @@ class _LocationsTabState extends ConsumerState<LocationsTab> {
     );
     return result ?? false;
   }
+
+  Future<void> _promptRename(
+    BuildContext context,
+    MonitoredLocationRecord record,
+  ) async {
+    final controller = TextEditingController(text: record.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename location'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Name',
+            hintText: 'e.g. Home, Office, Riverside Park',
+          ),
+          onSubmitted: (value) =>
+              Navigator.of(context).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('rename_save_button'),
+            onPressed: () =>
+                Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || name == record.name || !mounted) {
+      return;
+    }
+    await ref.read(locationsControllerProvider.notifier).rename(record.id!, name);
+  }
 }
 
 // ------------------------------------------------------------------
@@ -231,12 +273,14 @@ class _LocationTile extends StatelessWidget {
     required this.record,
     required this.onSelect,
     required this.onSetPrimary,
+    required this.onRename,
     required this.onRemove,
   });
 
   final MonitoredLocationRecord record;
   final VoidCallback onSelect;
   final VoidCallback onSetPrimary;
+  final VoidCallback onRename;
   final VoidCallback onRemove;
 
   @override
@@ -261,12 +305,15 @@ class _LocationTile extends StatelessWidget {
           tooltip: 'Location actions',
           onSelected: (value) => switch (value) {
             'use' => onSelect(),
+            'rename' => onRename(),
             'primary' => onSetPrimary(),
             'remove' => onRemove(),
             _ => null,
           },
           itemBuilder: (context) => [
             const PopupMenuItem(value: 'use', child: Text('Use for weather')),
+            if (record.id != null)
+              const PopupMenuItem(value: 'rename', child: Text('Rename')),
             if (!record.isPrimary)
               const PopupMenuItem(
                 value: 'primary',

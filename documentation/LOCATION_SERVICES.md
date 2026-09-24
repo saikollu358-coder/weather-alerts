@@ -44,45 +44,52 @@ and `geolocator` requests them at runtime. Web uses the browser geolocation
 API (page must be served over HTTPS/localhost) and stays compilable; the same
 conditional-import principle keeps location code testable without a device.
 
+Right after sign-in, when no monitored location exists yet, the home tab calls
+`DashboardController.promptForCurrentLocation()` **once** to resolve permission
+(prompt only — nothing is saved automatically). Saving the current position is
+explicit via the "Add current location" button / "Use my current GPS location"
+action, which goes through `SaveCurrentLocationUseCase` and names the location
+by reverse geocoding (falling back to "Current location").
+
 ## Map view (Locations tab)
 
 The Locations tab offers a List / Map toggle. The map (`LocationsMapView`)
 renders every saved monitored location as a marker; tapping a marker selects
 that location for the weather dashboard (same behaviour as tapping the list
-tile).
+tile). When location permission was granted, the map also shows a live
+blue-dot marker for the device position with a translucent accuracy circle,
+plus zoom in/out and a "locate me" button (bottom-right controls). Saved
+locations can be renamed from the list tile's action menu.
 
-The map is powered by `google_maps_flutter` and is **opt-in**: it only renders
-when a Google Maps API key was supplied at build time. No key is ever
-committed — configuration enters via:
+The map is powered by `flutter_map` with a free OpenStreetMap base layer and
+therefore requires **no API key and no billing account** for the base map. A
+layer chip row lets the user overlay weather tiles on top:
 
-| Platform | Key source |
-| --- | --- |
-| Android | `WEATHER_ALERTS_GOOGLE_MAPS_API_KEY` `--dart-define` (guards the Dart widget) **and** the same value as an env var / Gradle property so Gradle injects it into the manifest placeholder |
-| Web | `WEATHER_ALERTS_GOOGLE_MAPS_API_KEY` `--dart-define` (drives the Dart-side guard) **and** the Maps JavaScript API `<script>` tag in `web/index.html` |
+| Layer | Provider | Cost / key |
+| --- | --- | --- |
+| Base | OpenStreetMap | Free, attribution required |
+| Radar (precipitation) | RainViewer Weather Maps API | Free for personal/educational use, no key, attribution required; universal-blue 256px tiles up to zoom 7 |
+| Temperature / Wind | OpenWeatherMap weather maps | Paid product; requires `WEATHER_ALERTS_OPENWEATHER_API_KEY` at build time |
 
-Run with a key on Android (pass the dart-define so the Dart guard allows the map,
-and the env var so Gradle can inject the manifest value):
-
-```sh
-$env:WEATHER_ALERTS_GOOGLE_MAPS_API_KEY="YOUR_KEY"
-flutter run --dart-define=WEATHER_ALERTS_GOOGLE_MAPS_API_KEY=YOUR_KEY
-```
-
-Build web with both the dart-define and the `web/index.html` script tag
-(see the commented placeholder there):
+No secrets are ever committed. The only optional key is the OpenWeatherMap one
+(paid, temperature/wind layers only), injected via `--dart-define`:
 
 ```sh
-flutter run -d chrome --dart-define=WEATHER_ALERTS_GOOGLE_MAPS_API_KEY=YOUR_KEY
+flutter run --dart-define=WEATHER_ALERTS_OPENWEATHER_API_KEY=YOUR_KEY
+flutter run -d chrome --dart-define=WEATHER_ALERTS_OPENWEATHER_API_KEY=YOUR_KEY
 ```
 
-Without a key the map falls back to a "Map not configured" hint, so the app
-(and its widget tests) stays fully deterministic and testable on the host.
+Without an OpenWeatherMap key the radar + base layers still work; the
+temperature and wind chips are shown disabled with an explanatory note.
+RainViewer radar is fetched at runtime and needs no key.
+
+See `documentation/WEATHER_MAPS.md` for service and pricing details.
 
 ## Verification
 
 ```sh
 flutter analyze
-flutter test            # 143 tests, incl. 45 Phase 5 tests
+flutter test
 flutter build web
 ```
 

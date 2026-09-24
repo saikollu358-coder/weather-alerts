@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../features/authentication/application/auth_providers.dart';
 import '../features/authentication/application/auth_state.dart';
 import '../features/authentication/presentation/screens/forgot_password_screen.dart';
+import '../features/authentication/presentation/screens/local_mode_screen.dart';
 import '../features/authentication/presentation/screens/login_screen.dart';
 import '../features/authentication/presentation/screens/register_screen.dart';
 import '../features/dashboard/presentation/dashboard_shell.dart';
@@ -32,6 +33,11 @@ class AppRouter {
           path: RoutePath.splash,
           name: RouteName.splash,
           builder: (context, state) => const SplashScreen(),
+        ),
+        GoRoute(
+          path: RoutePath.localMode,
+          name: RouteName.localMode,
+          builder: (context, state) => const LocalModeScreen(),
         ),
         GoRoute(
           path: RoutePath.login,
@@ -88,6 +94,13 @@ class AppRouter {
         return null;
       case AuthStatus.unauthenticated:
       case AuthStatus.error:
+        if (!ref.read(cloudAuthAvailableProvider)) {
+          // No cloud backend in this build: sign-in/registration are unusable,
+          // so park on the local-mode gate instead of a login page that could
+          // never succeed.
+          final onGate = _localModeScreens.contains(location);
+          return onGate ? null : RoutePath.localMode;
+        }
         final allowed = _publicScreens.contains(location);
         return allowed ? null : RoutePath.login;
       case AuthStatus.authenticated:
@@ -104,8 +117,19 @@ class AppRouter {
     RoutePath.forgotPassword,
   };
 
+  /// Screens reachable in a build without a cloud backend.
+  ///
+  /// The splash path is deliberately NOT included: like the cloud login flow,
+  /// an unauthenticated local-only user must move off the splash screen onto
+  /// the gate. (The splash screen itself is only shown while [AuthStatus]
+  /// is still resolving.)
+  static const Set<String> _localModeScreens = {
+    RoutePath.localMode,
+  };
+
   /// Screens an already-authenticated user must not see.
   static const Set<String> _authScreens = {
+    RoutePath.localMode,
     RoutePath.login,
     RoutePath.register,
     RoutePath.forgotPassword,

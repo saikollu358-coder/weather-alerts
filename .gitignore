@@ -43,6 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/build/
 
 # ---------------------------------------------------------------------
 # Firebase & secrets (developer-supplied, never committed)
@@ -74,3 +75,4 @@ functions/node_modules/
 
 # Local-only IDE scratch
 .vscode/
+/tool/reports/

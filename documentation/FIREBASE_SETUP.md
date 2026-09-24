@@ -5,8 +5,11 @@ cloud sync. Config **never lives in the repo**: it enters through platform
 config files (`google-services.json`) or `--dart-define`.
 
 Until configuration is present the app runs in **local-only mode** (offline
-first): sign-in/registration show a friendly "cloud sign-in requires Firebase
-configuration" error.
+first). A "Running in local mode" gate is shown on launch instead of silently
+skipping the login page: it explains that sign-in/registration are unavailable
+(this build has no cloud backend) and lets the user opt into the offline guest
+session. Sign-in attempts then fail with a friendly "cloud sign-in requires
+Firebase configuration" error.
 
 ## Prerequisites (Firebase console)
 
@@ -46,10 +49,31 @@ configuration" error.
    flutter build apk --release
    ```
 
-## Web (optional)
+## Web (recommended: `tool/` helpers)
 
-Build with the six `FIREBASE_WEB_*` defines from the Firebase console
-(Project settings → Your apps → Web app):
+The six `FIREBASE_WEB_*` defines are read from the gitignored
+`tool/.env.web` file so you never commit or retype them:
+
+```sh
+# 1. First time: create your private env file from the template
+Copy-Item tool\env.web.example tool\.env.web
+
+# 2. Fill in tool\.env.web with values from the Firebase console
+#    (Project settings -> Your apps -> Web app)
+
+# 3. Run or build
+pwsh tool\run_web.ps1          # flutter run -d chrome with the defines
+pwsh tool\build_web.ps1        # flutter build web with the defines
+```
+
+The scripts warn (and stay local-only) when `tool/.env.web` is missing or has
+no values. `AppConfig.firebaseWebOptions`
+(`lib/core/config/app_config.dart`) assembles the defines into
+`FirebaseOptions`.
+
+## Web (manual alternative)
+
+Build with the six `FIREBASE_WEB_*` defines directly:
 
 ```sh
 flutter run -d chrome \
@@ -61,9 +85,6 @@ flutter run -d chrome \
   --dart-define=FIREBASE_WEB_APP_ID=1:1234567890:web:abcdef
 ```
 
-`AppConfig.firebaseWebOptions` (`lib/core/config/app_config.dart`) assembles
-these into `FirebaseOptions`.
-
 ## Where the code hooks in
 
 - `lib/services/firebase/firebase_service.dart` — initialization + the
@@ -72,6 +93,13 @@ these into `FirebaseOptions`.
   (register stores the chosen **username** as the auth display name).
 - `lib/data/repositories/auth_repository_impl.dart` — after registration writes
   `users/{uid}/profile/default` with `{username, email, created_at, updated_at}`.
+- `lib/routing/app_router.dart` — the route guard checks
+  `cloudAuthAvailableProvider` (`lib/features/authentication/application/
+  auth_providers.dart`): with a cloud backend, signed-out users go to the
+  **Login page**; without one they are parked on the **local-mode gate**
+  (`lib/features/authentication/presentation/screens/local_mode_screen.dart`),
+  which calls `LocalAuthService.startLocalGuest()` to opt into the offline
+  session.
 - Registration is intentionally minimal: **username + email + password**.
   Login is **email + password** (Firebase Auth signs in by email).
 
@@ -84,4 +112,5 @@ flutter test
 
 After `google-services.json` is in place you can confirm the connection by
 registering a new account: the Profile screen then shows **Cloud account**
-instead of "Local mode".
+instead of "Local mode", and a signed-out user is sent to the **Login page**
+instead of the local-mode gate.

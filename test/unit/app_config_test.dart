@@ -17,7 +17,7 @@ void main() {
         config.geocodingApiBaseUrl,
         'https://geocoding-api.open-meteo.com/v1',
       );
-      expect(config.googleMapsApiKey, isEmpty);
+      expect(config.openWeatherApiKey, isEmpty);
       expect(config.isProduction, isFalse);
     });
 
@@ -33,7 +33,7 @@ void main() {
         environment: 'prod',
         weatherApiBaseUrl: 'https://example.invalid/v1',
         geocodingApiBaseUrl: 'https://geo.example.invalid/v1',
-        googleMapsApiKey: '',
+        openWeatherApiKey: '',
         loggingEnabled: false,
         firebaseWebApiKey: '',
         firebaseWebAuthDomain: '',
@@ -45,7 +45,6 @@ void main() {
 
       expect(config.environment, 'prod');
       expect(config.loggingEnabled, isFalse);
-      expect(config.googleMapsApiKey, isEmpty);
       expect(config.isProduction, isTrue);
     });
   });

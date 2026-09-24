@@ -7,13 +7,6 @@ import java.util.Properties
 // so the project keeps building in local-only mode without any Firebase config.
 val hasGoogleServices = file("google-services.json").exists()
 
-// Google Maps API key (NEVER committed). Provided at build time via the
-// `WEATHER_ALERTS_GOOGLE_MAPS_API_KEY` environment variable or the Gradle
-// property of the same name (e.g. in android/gradle.properties). An empty key
-// keeps the app buildable and the map shows a setup hint at runtime.
-val googleMapsApiKey: String = System.getenv("WEATHER_ALERTS_GOOGLE_MAPS_API_KEY")
-    ?: (findProperty("WEATHER_ALERTS_GOOGLE_MAPS_API_KEY") as? String ?: "")
-
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -56,8 +49,6 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-
-        manifestPlaceholders["googleMapsApiKey"] = googleMapsApiKey
     }
 
     signingConfigs {

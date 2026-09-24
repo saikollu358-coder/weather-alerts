@@ -59,6 +59,36 @@ class LocationsController extends Notifier<LocationsState> {
     }
   }
 
+  /// Renames a saved location; blank/unchanged names are ignored.
+  Future<void> rename(int id, String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final repository = ref.read(monitoredLocationRepositoryProvider);
+    try {
+      final record = await repository.locationById(id);
+      if (record == null) {
+        await refresh();
+        return;
+      }
+      if (record.name == trimmed) {
+        await refresh();
+        return;
+      }
+      await repository.updateLocation(
+        record.copyWith(
+          name: trimmed,
+          updatedAtUtc: DateTime.now().toUtc(),
+        ),
+      );
+      await refresh();
+    } catch (e) {
+      _set(LocationsState(
+        status: LocationsStatus.error,
+        errorMessage: 'Could not rename the location.',
+      ));
+    }
+  }
+
   void _set(LocationsState next) {
     if (!ref.mounted) return;
     state = next;

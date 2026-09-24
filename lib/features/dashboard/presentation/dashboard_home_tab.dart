@@ -21,7 +21,7 @@ import '../application/dashboard_state.dart';
 /// Renders location -> weather -> forecast -> analysis -> risk for the
 /// selected location, with the mandatory "Last updated:" timestamp and stale
 /// indicator, plus the add-location permission flow when no location exists.
-class DashboardHomeTab extends ConsumerWidget {
+class DashboardHomeTab extends ConsumerStatefulWidget {
   const DashboardHomeTab({
     super.key,
     this.onOpenLocations,
@@ -32,11 +32,32 @@ class DashboardHomeTab extends ConsumerWidget {
   final VoidCallback? onOpenAlerts;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardHomeTab> createState() => _DashboardHomeTabState();
+}
+
+class _DashboardHomeTabState extends ConsumerState<DashboardHomeTab> {
+  bool _autoLocationPrompted = false;
+
+  @override
+  Widget build(BuildContext context) {
     final dashboard = ref.watch(dashboardControllerProvider);
     final locationState = ref.watch(locationControllerProvider);
     final hasContent =
         dashboard.bundle != null && dashboard.analysis != null;
+
+    // Right after sign-in, when the user has no saved location yet, ask for
+    // location permission once so the app can show the exact current position.
+    if (!_autoLocationPrompted &&
+        dashboard.status == DashboardStatus.needsLocation &&
+        locationState.status == LocationStatus.unknown) {
+      _autoLocationPrompted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref
+            .read(dashboardControllerProvider.notifier)
+            .promptForCurrentLocation();
+      });
+    }
 
     Future<void> addCurrent() =>
         ref.read(dashboardControllerProvider.notifier).useCurrentGps();
@@ -60,7 +81,7 @@ class DashboardHomeTab extends ConsumerWidget {
             onAddCurrent: addCurrent,
             onRequestPermission: requestPermission,
             onOpenSettings: openSettings,
-            onOpenLocations: onOpenLocations,
+            onOpenLocations: widget.onOpenLocations,
           );
         case DashboardStatus.error:
           return _ErrorView(
@@ -79,8 +100,8 @@ class DashboardHomeTab extends ConsumerWidget {
           ? dashboard.errorMessage
           : null,
       onRefresh: refresh,
-      onOpenLocations: onOpenLocations,
-      onOpenAlerts: onOpenAlerts,
+      onOpenLocations: widget.onOpenLocations,
+      onOpenAlerts: widget.onOpenAlerts,
     );
   }
 }
@@ -189,6 +210,16 @@ class _NeedsLocationPanel extends StatelessWidget {
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 24),
+            if (locationState.status == LocationStatus.ready) ...[
+              Text(
+                'Location access granted. Save your current position to start '
+                'monitoring weather here.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.primary),
+              ),
+              const SizedBox(height: 12),
+            ],
             ..._permissionControls(theme),
             const SizedBox(height: 8),
             if (onOpenLocations != null)

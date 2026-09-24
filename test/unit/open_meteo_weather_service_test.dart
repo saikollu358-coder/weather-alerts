@@ -19,7 +19,7 @@ const testConfig = AppConfig(
   environment: 'test',
   weatherApiBaseUrl: 'https://api.test.example/v1',
   geocodingApiBaseUrl: 'https://geocode.test.example/v1',
-  googleMapsApiKey: '',
+  openWeatherApiKey: '',
   loggingEnabled: false,
   firebaseWebApiKey: '',
   firebaseWebAuthDomain: '',

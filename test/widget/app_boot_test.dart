@@ -31,7 +31,14 @@ void main() {
       addTearDown(auth.dispose);
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [authRepositoryProvider.overrideWith((ref) => auth)],
+          overrides: [
+            authRepositoryProvider.overrideWith((ref) => auth),
+            // This test simulates a cloud-connected build: the auth backend is
+            // available, so the router may show the login flow.
+            authServiceProvider.overrideWithValue(
+              FakeAuthService(available: true),
+            ),
+          ],
           child: const WeatherAlertsApp(),
         ),
       );
@@ -40,6 +47,23 @@ void main() {
 
       expect(find.text('Welcome back'), findsOneWidget);
       expect(find.byKey(const ValueKey('login_email')), findsOneWidget);
+    });
+
+    testWidgets('local-only builds show the local-mode gate, not the login page',
+        (tester) async {
+      await tester.pumpWidget(const ProviderScope(child: WeatherAlertsApp()));
+      // Drive the redirect away from the splash screen without pumpAndSettle
+      // (an indeterminate splash spinner never settles by itself).
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Running in local mode'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('continue_locally_button')),
+        findsOneWidget,
+      );
+      expect(find.text('Welcome back'), findsNothing);
     });
 
     testWidgets('authenticated users land on the dashboard', (tester) async {

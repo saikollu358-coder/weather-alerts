@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../core/errors/app_exception.dart';
 import '../../domain/entities/auth_user.dart';
 import '../../domain/services/auth_service.dart';
@@ -9,6 +11,13 @@ import '../../domain/services/auth_service.dart';
 /// alerts / settings experience remains usable, clearly marked as a local
 /// (non-account) session. Sign-in/registration are not possible: they require
 /// cloud configuration and fail with a friendly [FirebaseUnavailableException].
+///
+/// Unlike a cloud session, the local guest is NOT activated automatically on
+/// launch: the app first shows a "local mode" gate so a missing cloud
+/// connection is never silently hidden and the login page is not skipped for a
+/// build that cannot sign in. [startLocalGuest] opts into the guest identity;
+/// until then [currentUser] is null and [watchAuthState] emits no signed-in
+/// user.
 class LocalAuthService implements AuthService {
   LocalAuthService();
 
@@ -20,14 +29,31 @@ class LocalAuthService implements AuthService {
     isLocalGuest: true,
   );
 
+  final StreamController<AuthUser?> _controller =
+      StreamController<AuthUser?>.broadcast();
+  bool _guestActive = false;
+
+  /// Opts into the local (offline-first) guest session.
+  ///
+  /// Emits [guest] to [watchAuthState] listeners so the app can proceed to the
+  /// dashboard. Called by the local-mode gate screen.
+  void startLocalGuest() {
+    if (_guestActive) return;
+    _guestActive = true;
+    _controller.add(guest);
+  }
+
   @override
   bool get isAvailable => false;
 
   @override
-  AuthUser? get currentUser => guest;
+  AuthUser? get currentUser => _guestActive ? guest : null;
 
   @override
-  Stream<AuthUser?> watchAuthState() => Stream.value(guest);
+  Stream<AuthUser?> watchAuthState() async* {
+    yield currentUser;
+    yield* _controller.stream;
+  }
 
   @override
   Future<AuthUser> register({
