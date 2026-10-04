@@ -1,21 +1,21 @@
-# Location & Geography Services (Phase 5)
+# Location & Geography Services
 
-The app resolves the device position (GPS) and human-readable places so later
-phases can fetch weather for a monitored location and issue location-based
-alerts.
+The app resolves the device position (GPS) and its human-readable place name.
+There are no saved places: the only location is wherever the device currently
+is, and every weather fetch, alert and notification is keyed on that position.
 
 ## Layer overview
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| Entities | `lib/domain/entities/geo_position.dart`, `place.dart` | `GeoPosition` (fix + metadata, `locationKey`, bounds check), `Place` (search result + `displayName`, `fromJson`). |
+| Entities | `lib/domain/entities/geo_position.dart`, `place.dart`, `current_location.dart` | `GeoPosition` (fix + metadata, `locationKey`, bounds check), `Place` (search result + `displayName`, `fromJson`), `CurrentLocation` (resolved position, label with coordinate fallback, JSON round-trip). |
 | Permission model | `lib/domain/enums/location_permission.dart` | `LocationPermissionStatus { denied, deniedForever, granted }` — platform's 5 states collapse into the 3 the UI branches on. |
 | Interfaces | `lib/domain/services/location_service.dart`, `geocoding_service.dart` | Plugin/network-free contracts: GPS + permission; place search + reverse. |
 | GPS impl | `lib/services/location/geolocator_location_service.dart` | Wraps `geolocator`; the `GeolocatorPlatform` is injectable so tests use a fake. |
-| Geocoding impl | `lib/services/location/geocoding_api_service.dart` | Open-Meteo `GET /search` and `/reverse`, `http` client injectable. |
+| Geocoding impl | `lib/services/location/geocoding_api_service.dart` | Open-Meteo `GET /search` for place names; keyless BigDataCloud reverse geocode for labels (`ReverseGeocodingProvider`, configurable via `AppConfig`). `http` client injectable. |
 | Providers | `lib/services/location/location_service_providers.dart` | `locationServiceProvider`, `geocodingServiceProvider`, `httpClientProvider`. |
 | Controller | `lib/features/location/application/location_controller.dart` + `location_state.dart` | Permission/ready state machine (`unknown → waitingPermission/denied/deniedForever/unavailable/ready`) and the live position stream. |
-| Use case | `lib/features/location/application/save_current_location_use_case.dart` | Captures current position → `MonitoredLocationRepository` (source `gps`), naming via reverse geocoding. |
+| Use case | `lib/features/location/application/resolve_current_location_use_case.dart` | Captures the current position → `CurrentLocationRepository`, naming via reverse geocoding with a per-session label cache. |
 | Errors | `lib/core/errors/location_exception.dart` | User-safe `LocationPermissionDeniedException`, `LocationUnavailableException`, `GeocodingException`. |
 
 ## Behavior
@@ -32,34 +32,37 @@ alerts.
   last-known fix → live stream; `requestPermission()` re-prompts after a
   denial; `stop()` cancels the subscription. Stream revocations move the state
   to `denied`.
-* `SaveCurrentLocationUseCase` uses a supplied name when given, otherwise the
-  reverse-geocoded `Place.displayName`, falling back to "Current location" if
-  geocoding fails. Duplicate coordinates are rejected by the Phase 4 unique
-  index and surfaced as an `AppException` to the caller.
+* `ResolveCurrentLocationUseCase` captures the fix, resolves a label by reverse
+  geocoding (BigDataCloud by default), and persists it through
+  `CurrentLocationRepository` under the `last_known_location` preference.
+  Coordinates are quantized to 4 decimals so the weather cache key, alert key
+  and FCM `locationKeys` entry stay stable across reads. Geocoding failures are
+  caught and logged: the label falls back to a `lat, lng` string and weather
+  still loads. Labels are cached for the process lifetime so repeated captures
+  in the same area do not re-hit the geocoder.
 
 ## Permissions
 
-Android: `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION` are declared (Phase 1),
-and `geolocator` requests them at runtime. Web uses the browser geolocation
-API (page must be served over HTTPS/localhost) and stays compilable; the same
+Android: `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION` are declared and
+`geolocator` requests them at runtime. Web uses the browser geolocation API
+(page must be served over HTTPS/localhost) and stays compilable; the same
 conditional-import principle keeps location code testable without a device.
 
-Right after sign-in, when no monitored location exists yet, the home tab calls
-`DashboardController.promptForCurrentLocation()` **once** to resolve permission
-(prompt only — nothing is saved automatically). Saving the current position is
-explicit via the "Add current location" button / "Use my current GPS location"
-action, which goes through `SaveCurrentLocationUseCase` and names the location
-by reverse geocoding (falling back to "Current location").
+The home tab resolves permission through `DashboardController`, which captures
+the position whenever permission is already granted and only prompts when it is
+not. `promptForCurrentLocation()` re-prompts after a denial, and the "Allow
+location access" button on the permission banner does the same. Nothing is ever
+saved as a *place* — the captured position is only cached as the last known fix
+so background checks have something to work with.
 
-## Map view (Locations tab)
+## Map view (Map tab)
 
-The Locations tab offers a List / Map toggle. The map (`LocationsMapView`)
-renders every saved monitored location as a marker; tapping a marker selects
-that location for the weather dashboard (same behaviour as tapping the list
-tile). When location permission was granted, the map also shows a live
-blue-dot marker for the device position with a translucent accuracy circle,
-plus zoom in/out and a "locate me" button (bottom-right controls). Saved
-locations can be renamed from the list tile's action menu.
+The Map tab is map-only: there is no location list and nothing to select. Before
+permission is granted it renders the permission prompt; once granted,
+`LocationsMapView` shows the device position as a blue-dot marker with a
+translucent accuracy circle, plus zoom in/out and a recenter button
+(bottom-right controls). Moving more than `kReloadOnMoveMeters` (500 m)
+recenters and reloads weather for the new position.
 
 The map is powered by `flutter_map` with a free OpenStreetMap base layer and
 therefore requires **no API key and no billing account** for the base map. A
@@ -95,4 +98,5 @@ flutter build web
 
 Tests inject a fake `GeolocatorPlatform` (service), a `MockClient`
 (geocoding), and a fake `LocationService` (controller/use case), so nothing
-hits a real channel or network.
+hits a real channel or network. `test/unit/current_location_repository_test.dart`
+covers the preference round-trip and corrupt-JSON tolerance.

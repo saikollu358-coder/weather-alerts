@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:weather_alerts/core/errors/app_exception.dart';
 import 'package:weather_alerts/domain/enums/location_permission.dart';
+import 'package:weather_alerts/domain/entities/place.dart';
 import 'package:weather_alerts/features/alerts/application/alerts_providers.dart';
 import 'package:weather_alerts/features/dashboard/application/dashboard_providers.dart';
 import 'package:weather_alerts/features/dashboard/application/dashboard_state.dart';
@@ -22,10 +23,18 @@ Future<DashboardState> awaitDashboard(ProviderContainer container) async {
   return container.read(dashboardControllerProvider);
 }
 
+/// A reverse-geocoding fake that always resolves to [name].
+FakeGeocodingService geocodingFor(String name) => FakeGeocodingService(
+      place: Place(name: name, latitude: 1, longitude: 2),
+    );
+
 void main() {
   group('DashboardController pipeline', () {
-    test('boots to needsLocation when there are no saved locations', () async {
-      final container = makePipelineContainer();
+    test('boots to needsLocation when there is no cached or live position',
+        () async {
+      final container = makePipelineContainer(
+        location: FakeLocationService(permission: LocationPermissionStatus.denied),
+      );
       addTearDown(container.dispose);
 
       final state = await awaitDashboard(container);
@@ -35,21 +44,21 @@ void main() {
     });
 
     test(
-        'selects the primary location, loads weather, analyses it and '
-        'persists alerts', () async {
+        'captures the live fix, loads weather, analyses it and persists alerts',
+        () async {
       final at = DateTime.utc(2026, 9, 6, 12);
-      final location = sampleLocation(id: 1, name: 'Testville', isPrimary: true);
-      final locations = InMemoryMonitoredLocations(seed: [location]);
+      final location = FakeLocationService(
+        fix: geoPosition(18.149, -83.371),
+        permission: LocationPermissionStatus.granted,
+      );
       final alerts = InMemoryAlertHistory();
       final weather = FakeWeatherService(
-        bundle: sampleBundle(
-          atUtc: at,
-          hourly: [thunderHourlyPoint(at)],
-        ),
+        bundle: sampleBundle(atUtc: at, hourly: [thunderHourlyPoint(at)]),
       );
       final container = makePipelineContainer(
         weather: weather,
-        locations: locations,
+        location: location,
+        geocoding: geocodingFor('San Juan'),
         alerts: alerts,
       );
       addTearDown(container.dispose);
@@ -57,11 +66,12 @@ void main() {
       final state = await awaitDashboard(container);
 
       expect(state.status, DashboardStatus.ready);
-      expect(state.location?.name, 'Testville');
+      expect(state.location?.label, 'San Juan');
+      expect(state.location?.hasResolvedName, isTrue);
       expect(state.bundle, isNotNull);
       expect(state.analysis, isNotNull);
       expect(state.analysis!.hasActiveHazards, isTrue);
-      expect(weather.lastLocationKey, location.locationKey);
+      expect(weather.lastLocationKey, '18.149,-83.371');
 
       await pumpUntil(
         () => container.read(alertsControllerProvider).active.isNotEmpty,
@@ -71,192 +81,218 @@ void main() {
       final hazards = active.map((a) => a.hazard).toSet();
       expect(hazards, contains('thunderstorm'));
       expect(hazards, contains('lightning'));
-      expect(active.every((a) => a.locationKey == location.locationKey), isTrue);
+      expect(
+        active.every((a) => a.locationKey == state.location!.locationKey),
+        isTrue,
+      );
     });
 
-    test('selectLocation loads the chosen record and keeps it primary',
-        () async {
-      final secondary = sampleLocation(
-        id: 2,
-        name: 'Riverside',
-        latitude: 3.0,
-        longitude: 4.0,
-      );
-      final locations = InMemoryMonitoredLocations(
-        seed: [sampleLocation(id: 1, isPrimary: true), secondary],
-      );
-      final weather = FakeWeatherService(
-        bundle: sampleBundle(locationKey: '3.0,4.0'),
-      );
+    test('records the captured fix as the last known position', () async {
+      final cache = InMemoryCurrentLocation();
       final container = makePipelineContainer(
-        weather: weather,
-        locations: locations,
+        location: FakeLocationService(
+          fix: geoPosition(18.149, -83.371),
+          permission: LocationPermissionStatus.granted,
+        ),
+        geocoding: geocodingFor('San Juan'),
+        currentLocation: cache,
       );
       addTearDown(container.dispose);
 
-      // Let bootstrap settle on the primary location first, then switch.
       await awaitDashboard(container);
-      expect(container.read(dashboardControllerProvider).location?.name,
-          'Testville');
+
+      expect(cache.stored, isNotNull);
+      expect(cache.stored!.label, 'San Juan');
+      expect(cache.stored!.latitude, 18.149);
+      expect(cache.stored!.longitude, -83.371);
+    });
+
+test('falls back to a coordinate label when reverse geocoding fails',
+        () async {
+      final container = makePipelineContainer(
+        weather: FakeWeatherService(
+          bundle: sampleBundle(locationKey: '42.36,-71.05'),
+        ),
+        location: FakeLocationService(
+          fix: geoPosition(42.36, -71.05),
+          permission: LocationPermissionStatus.granted,
+        ),
+        geocoding: FakeGeocodingService(error: StateError('offline')),
+      );
+      addTearDown(container.dispose);
+
+      final state = await awaitDashboard(container);
+
+      expect(state.status, DashboardStatus.ready);
+      expect(state.location?.label, '42.360, -71.050');
+      expect(state.location?.hasResolvedName, isFalse);
+    });
+
+    test('shows the cached position before the first fix arrives', () async {
+      final cached = sampleCurrentLocation(
+        latitude: 18.149,
+        longitude: -83.371,
+        label: 'San Juan',
+      );
+      final weather = FakeWeatherService(
+        bundle: sampleBundle(locationKey: '18.149,-83.371'),
+      );
+      final container = makePipelineContainer(
+        weather: weather,
+        location: FakeLocationService(permission: LocationPermissionStatus.denied),
+        currentLocation: InMemoryCurrentLocation(seed: cached),
+      );
+      addTearDown(container.dispose);
+
+      final state = await awaitDashboard(container);
+
+      expect(state.status, DashboardStatus.ready);
+      expect(state.location?.label, 'San Juan');
+      expect(weather.lastLocationKey, '18.149,-83.371');
+    });
+
+    test('requestPermission resolves the permission and captures the fix',
+        () async {
+      final cache = InMemoryCurrentLocation();
+      final container = makePipelineContainer(
+        location: FakeLocationService(
+          fix: geoPosition(42.36, -71.05),
+          permission: LocationPermissionStatus.granted,
+        ),
+        weather: FakeWeatherService(bundle: sampleBundle(locationKey: '42.36,-71.05')),
+        geocoding: geocodingFor('Boston'),
+        currentLocation: cache,
+      );
+      addTearDown(container.dispose);
 
       await container
           .read(dashboardControllerProvider.notifier)
-          .selectLocation(secondary);
-
-      expect(container.read(dashboardControllerProvider).status,
-          DashboardStatus.ready);
-      expect(container.read(dashboardControllerProvider).location?.name,
-          'Riverside');
-      expect(weather.lastLocationKey, '3.0,4.0');
-
-      final reloaded = await locations.allLocations();
-      expect(reloaded.firstWhere((r) => r.id == 2).isPrimary, isTrue);
-      expect(reloaded.firstWhere((r) => r.id == 1).isPrimary, isFalse);
-    });
-
-    test('useCurrentGps saves and selects the current position when granted',
-        () async {
-      final location = FakeLocationService(
-        fix: geoPosition(42.36, -71.05),
-        permission: LocationPermissionStatus.granted,
-      );
-      final locations = InMemoryMonitoredLocations();
-      final weather = FakeWeatherService(
-        bundle: sampleBundle(locationKey: '42.36,-71.05'),
-      );
-      final container = makePipelineContainer(
-        weather: weather,
-        location: location,
-        locations: locations,
-      );
-      addTearDown(container.dispose);
-
-      final saved = await container
-          .read(dashboardControllerProvider.notifier)
-          .useCurrentGps();
-
-      expect(saved, isNotNull);
-      expect(saved!.latitude, 42.36);
+          .requestPermission();
 
       await pumpUntil(
         () => container.read(dashboardControllerProvider).status ==
             DashboardStatus.ready,
       );
-      final state = container.read(dashboardControllerProvider);
-      expect(state.location?.name, '42.360, -71.050');
-      expect(weather.lastLocationKey, saved.locationKey);
-
-      final persisted = await locations.allLocations();
-      expect(persisted.length, 1);
-      expect(persisted.single.isPrimary, isTrue);
-    });
-
-    test('promptForCurrentLocation resolves permission without saving',
-        () async {
-      final location = FakeLocationService(
-        fix: geoPosition(42.36, -71.05),
-        permission: LocationPermissionStatus.granted,
-      );
-      final locations = InMemoryMonitoredLocations();
-      final container = makePipelineContainer(
-        location: location,
-        locations: locations,
-      );
-      addTearDown(container.dispose);
-
-      final granted = await container
-          .read(dashboardControllerProvider.notifier)
-          .promptForCurrentLocation();
-
-      expect(granted, isTrue);
       final locationState = container.read(locationControllerProvider);
       expect(locationState.status, LocationStatus.ready);
       expect(locationState.position?.latitude, 42.36);
-      expect((await locations.allLocations()), isEmpty);
+      expect(cache.stored?.label, 'Boston');
     });
 
-    test('promptForCurrentLocation surfaces a denial without saving',
+    test('requestPermission surfaces a denial without recording a position',
         () async {
-      final location = FakeLocationService(
-        permission: LocationPermissionStatus.denied,
-      );
-      final locations = InMemoryMonitoredLocations();
+      final cache = InMemoryCurrentLocation();
       final container = makePipelineContainer(
-        location: location,
-        locations: locations,
+        location: FakeLocationService(
+          permission: LocationPermissionStatus.denied,
+        ),
+        currentLocation: cache,
       );
       addTearDown(container.dispose);
 
-      final granted = await container
+      await container
           .read(dashboardControllerProvider.notifier)
-          .promptForCurrentLocation();
+          .requestPermission();
 
-      expect(granted, isFalse);
-      final locationState = container.read(locationControllerProvider);
-      expect(locationState.status, LocationStatus.denied);
-      expect((await locations.allLocations()), isEmpty);
+      expect(container.read(locationControllerProvider).status,
+          LocationStatus.denied);
+      expect(cache.stored, isNull);
     });
 
-    test(
-        'useCurrentGps requests permission when denied and saves once granted',
+    test('requestPermission captures once the user accepts the OS prompt',
+        () async {
+      final cache = InMemoryCurrentLocation();
+      final container = makePipelineContainer(
+        location: FakeLocationService(
+          fix: geoPosition(42.36, -71.05),
+          permission: LocationPermissionStatus.denied,
+        )..grantOnRequest = true,
+        geocoding: geocodingFor('Boston'),
+        currentLocation: cache,
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(dashboardControllerProvider.notifier)
+          .requestPermission();
+
+      expect(container.read(locationControllerProvider).status,
+          LocationStatus.ready);
+      expect(cache.stored?.label, 'Boston');
+    });
+
+    test('reuses the weather bundle for jitter below the reload threshold',
         () async {
       final location = FakeLocationService(
-        fix: geoPosition(42.36, -71.05),
-        permission: LocationPermissionStatus.denied,
-      )..grantOnRequest = true;
-      final weather = FakeWeatherService(
-        bundle: sampleBundle(locationKey: '42.36,-71.05'),
+        fix: geoPosition(18.1490, -83.3710),
+        permission: LocationPermissionStatus.granted,
       );
-      final locations = InMemoryMonitoredLocations();
+      final weather = FakeWeatherService(
+        bundle: sampleBundle(locationKey: '18.149,-83.371'),
+      );
       final container = makePipelineContainer(
         weather: weather,
         location: location,
-        locations: locations,
+        geocoding: geocodingFor('San Juan'),
       );
       addTearDown(container.dispose);
 
-      final saved = await container
-          .read(dashboardControllerProvider.notifier)
-          .useCurrentGps();
+      await awaitDashboard(container);
+      final fetchesAfterBoot = weather.calls;
 
-      expect(saved, isNotNull);
-      final locationState = container.read(locationControllerProvider);
-      expect(locationState.status, LocationStatus.ready);
-      final persisted = await locations.allLocations();
-      expect(persisted.length, 1);
-      expect(persisted.single.isPrimary, isTrue);
-      expect(persisted.single.name, '42.360, -71.050');
+      // ~11 m of jitter: inside GPS noise, so no new weather request is made.
+      location.emit(geoPosition(18.1491, -83.3710));
+      await pumpUntil(
+        () => container.read(dashboardControllerProvider).status ==
+            DashboardStatus.ready,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(weather.calls, fetchesAfterBoot);
+      expect(
+        container.read(dashboardControllerProvider).location?.latitude,
+        18.1491,
+        reason: 'the displayed position still follows the device',
+      );
     });
 
-    test('useCurrentGps saves nothing when permission stays denied', () async {
+    test('refetches weather once the device moves past the threshold',
+        () async {
       final location = FakeLocationService(
-        permission: LocationPermissionStatus.denied,
+        fix: geoPosition(18.1490, -83.3710),
+        permission: LocationPermissionStatus.granted,
       );
-      final locations = InMemoryMonitoredLocations();
+      final weather = FakeWeatherService(
+        bundle: sampleBundle(locationKey: '18.149,-83.371'),
+      );
       final container = makePipelineContainer(
+        weather: weather,
         location: location,
-        locations: locations,
+        geocoding: geocodingFor('San Juan'),
       );
       addTearDown(container.dispose);
 
-      final saved = await container
-          .read(dashboardControllerProvider.notifier)
-          .useCurrentGps();
+      await awaitDashboard(container);
+      final fetchesAfterBoot = weather.calls;
 
-      expect(saved, isNull);
-      final locationState = container.read(locationControllerProvider);
-      expect(locationState.status, LocationStatus.denied);
-      expect((await locations.allLocations()), isEmpty);
+      // ~2.2 km north: well past kReloadOnMoveMeters.
+      location.emit(geoPosition(18.1690, -83.3710));
+      await pumpUntil(() => weather.calls > fetchesAfterBoot);
+
+      expect(weather.calls, fetchesAfterBoot + 1);
+      expect(
+        container.read(dashboardControllerProvider).location?.latitude,
+        18.169,
+      );
     });
 
     test('refresh forwards forceRefresh to the weather service', () async {
-      final locations = InMemoryMonitoredLocations(
-        seed: [sampleLocation(id: 1, isPrimary: true)],
-      );
       final weather = FakeWeatherService(bundle: sampleBundle());
       final container = makePipelineContainer(
         weather: weather,
-        locations: locations,
+        location: FakeLocationService(
+          permission: LocationPermissionStatus.granted,
+        ),
       );
       addTearDown(container.dispose);
 
@@ -273,12 +309,11 @@ void main() {
     test('surfaces a user-safe message when weather loading fails', () async {
       const error =
           NetworkException(message: 'Weather data is currently unavailable.');
-      final locations = InMemoryMonitoredLocations(
-        seed: [sampleLocation(id: 1, isPrimary: true)],
-      );
       final container = makePipelineContainer(
         weather: FakeWeatherService(error: error),
-        locations: locations,
+        location: FakeLocationService(
+          permission: LocationPermissionStatus.granted,
+        ),
       );
       addTearDown(container.dispose);
 
@@ -290,14 +325,13 @@ void main() {
 
     test('re-runs analysis after a refresh and dedupes alerts', () async {
       final at = DateTime.utc(2026, 9, 6, 12);
-      final locations = InMemoryMonitoredLocations(
-        seed: [sampleLocation(id: 1, isPrimary: true)],
-      );
       final alerts = InMemoryAlertHistory();
       final weather = FakeWeatherService();
       final container = makePipelineContainer(
         weather: weather,
-        locations: locations,
+        location: FakeLocationService(
+          permission: LocationPermissionStatus.granted,
+        ),
         alerts: alerts,
       );
       addTearDown(container.dispose);

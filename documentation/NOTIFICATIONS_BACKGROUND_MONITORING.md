@@ -2,7 +2,9 @@
 
 Phases 9 + 11 wiring: local notifications, the periodic background weather
 check, the foreground FCM bridge, and the user-facing notification settings
-(settings screen + dashboard permission prompt). This is an *app-generated
+(settings screen + dashboard permission prompt). Background checks use the
+cached `last_known_location` — the device's position at the last foreground
+capture. This is an *app-generated
 assessment only* — official warnings always take precedence (see
 `AppConstants.assessmentDisclaimer`).
 
@@ -14,7 +16,7 @@ assessment only* — official warnings always take precedence (see
 | `domain/enums/notification_permission.dart` | `NotificationPermissionStatus { denied, permanentlyDenied, granted }` — UI branches on three cases. |
 | `services/notifications/local_notification_service.dart` | `flutter_local_notifications` impl. Lazy, idempotent `initialize()`; Android channel `weather_alerts`; iOS via Darwin settings; `permissionStatus()` reads `areNotificationsEnabled`/`checkPermissions`; `openSystemSettings()` deep-links via `Geolocator.openAppSettings()`; delivery failures are never fatal. |
 | `services/notifications/notification_service_providers.dart` | Riverpod providers for the service and the bootstrap. |
-| `features/notifications/application/background_weather_check_use_case.dart` | Runs the deterministic pipeline once for the primary location and decides what (if anything) to notify. |
+| `features/notifications/application/background_weather_check_use_case.dart` | Runs the deterministic pipeline once for the last known position and decides what (if anything) to notify. A no-op when no position has ever been cached. |
 | `features/notifications/application/notification_preferences.dart` | Preference keys `notifications_enabled` (default: enabled) and `notification_prompt_dismissed` (default: false). |
 | `features/notifications/application/notification_settings_state.dart` + `notification_settings_controller.dart` + `notification_settings_providers.dart` | `NotificationSettingsController` (Notifier): loads persisted toggle + `permissionStatus()`; exposes `toggleEnabled`, `allowNotifications`, `dismissPrompt`, `openSystemSettings`. |
 | `features/notifications/presentation/notification_permission_banner.dart` | In-app permission prompt shown on the dashboard home tab while it can still help. |
@@ -31,8 +33,8 @@ The engine and repositories are shared with the in-app pipeline — there is no
 second weather-logic implementation, hence no drift between foreground and
 background behavior.
 
-For each actionable finding (`WeatherAnalysis.actionableFindings`) for the
-primary location:
+For each actionable finding (`WeatherAnalysis.actionableFindings`) for the last
+known position:
 
 1. **Fresh onset** — no *active* alert record for that hazard+location → notify.
    A resolved alert does not count as active, so a cleared-and-reappeared hazard
@@ -79,7 +81,7 @@ condition must not notify repeatedly").
 ## Testing
 
 `test/unit/background_weather_check_use_case_test.dart` covers, with in-memory
-fakes: disabled preference no-op, no-primary no-op, benign no-op, fresh
+fakes: disabled preference no-op, no-cached-position no-op, benign no-op, fresh
 notify-per-hazard, cooldown suppression, post-cooldown re-notify, escalation
 bypass, re-detection after resolution, and weather-failure degradation.
 `test/unit/notification_settings_controller_test.dart` and

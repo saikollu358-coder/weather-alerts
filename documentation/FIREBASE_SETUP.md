@@ -1,7 +1,8 @@
 # Firebase Setup
 
-How to connect this app to a Firebase project for registration, login and
-cloud sync. Config **never lives in the repo**: it enters through platform
+How to connect this app to a Firebase project for registration, login and push
+notification routing. Config **never lives in the repo**: it enters through
+platform
 config files (`google-services.json`) or `--dart-define`.
 
 Until configuration is present the app runs in **local-only mode** (offline
@@ -93,6 +94,8 @@ flutter run -d chrome \
   (register stores the chosen **username** as the auth display name).
 - `lib/data/repositories/auth_repository_impl.dart` — after registration writes
   `users/{uid}/profile/default` with `{username, email, created_at, updated_at}`.
+  That profile document and `users/{uid}/devices/{deviceId}` are the **only**
+  client-written Firestore data; see `FIRESTORE_DATA_SCOPE.md`.
 - `lib/routing/app_router.dart` — the route guard checks
   `cloudAuthAvailableProvider` (`lib/features/authentication/application/
   auth_providers.dart`): with a cloud backend, signed-out users go to the

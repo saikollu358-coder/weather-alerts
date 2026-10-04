@@ -27,10 +27,8 @@ Widget _shell({
       notificationServiceProvider.overrideWithValue(
         notifications ?? FakeNotificationService(),
       ),
-      monitoredLocationRepositoryProvider.overrideWithValue(
-        InMemoryMonitoredLocations(
-          seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
-        ),
+      currentLocationRepositoryProvider.overrideWithValue(
+        InMemoryCurrentLocation(),
       ),
       alertHistoryRepositoryProvider.overrideWithValue(InMemoryAlertHistory()),
       weatherServiceProvider.overrideWithValue(

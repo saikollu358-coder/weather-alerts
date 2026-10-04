@@ -42,7 +42,7 @@ class LocalModeScreen extends ConsumerWidget {
               const SizedBox(height: 8),
               _Bullet(icon: Icons.person_off_outlined, scheme: scheme, text: 'Profile editing, login and cross-device sync are disabled.'),
               const SizedBox(height: 8),
-              _Bullet(icon: Icons.phone_android, scheme: scheme, text: 'Weather alerts and your saved locations still work fully on this device.'),
+              _Bullet(icon: Icons.phone_android, scheme: scheme, text: 'Weather risk for your current location still works fully on this device.'),
             ],
           ),
         ),

@@ -1,32 +1,26 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../../domain/entities/geo_position.dart';
-import '../../../domain/entities/monitored_location_record.dart';
+import '../../../domain/entities/current_location.dart';
 import '../../../services/weather_maps/weather_map_layers.dart';
 import '../../../services/weather_maps/weather_map_providers.dart';
+import '../../dashboard/application/dashboard_providers.dart';
 import '../application/location_providers.dart';
 
-/// Map of the saved monitored locations, shown in the Locations tab.
+/// Map of the device's current position, shown in the Map tab.
 ///
 /// Uses a free OpenStreetMap base layer plus optional weather overlays:
 /// precipitation radar (RainViewer, free) and, when an OpenWeatherMap key is
-/// supplied at build time, temperature and wind layers. Tapping a marker
-/// selects that location for the weather dashboard.
+/// supplied at build time, temperature and wind layers. There is only ever one
+/// point on this map: wherever the device currently is.
+///
+/// The camera is not moved automatically as GPS updates arrive — the marker
+/// follows the user, and the locate button re-centres on demand. Snapping the
+/// camera to every streamed fix would fight anyone trying to pan elsewhere.
 class LocationsMapView extends ConsumerStatefulWidget {
-  const LocationsMapView({
-    super.key,
-    required this.locations,
-    this.onSelect,
-  });
-
-  final List<MonitoredLocationRecord> locations;
-
-  final ValueChanged<MonitoredLocationRecord>? onSelect;
+  const LocationsMapView({super.key});
 
   @override
   ConsumerState<LocationsMapView> createState() => _LocationsMapViewState();
@@ -34,8 +28,10 @@ class LocationsMapView extends ConsumerStatefulWidget {
 
 class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
   final MapController _mapController = MapController();
+
+  /// Radar is the default because it is the only weather overlay that works
+  /// without a paid API key.
   WeatherMapLayer _selectedLayer = WeatherMapLayer.radar;
-  bool _cameraFitDone = false;
 
   @override
   void dispose() {
@@ -47,13 +43,21 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
   Widget build(BuildContext context) {
     final layers = ref.watch(weatherMapLayersProvider);
     final radarAsync = ref.watch(rainViewerRadarProvider);
-    final locationState = ref.watch(locationControllerProvider);
-    final myPosition = locationState.position;
 
-    if (widget.locations.isEmpty) {
+    final position = ref.watch(locationControllerProvider).position;
+    // Prefer the dashboard's resolved location so the banner shows the same
+    // place name as the weather tab; fall back to the raw fix before the
+    // pipeline has resolved one.
+    final resolved = ref.watch(
+      dashboardControllerProvider.select((state) => state.location),
+    );
+    final current = resolved ??
+        (position == null ? null : CurrentLocation.fromPosition(position));
+
+    if (current == null) {
       return const _MapMessage(
-        icon: Icons.place_outlined,
-        message: 'No saved locations to show on the map yet.',
+        icon: Icons.my_location,
+        message: 'Waiting for your current position…',
       );
     }
 
@@ -76,9 +80,8 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
                 key: const ValueKey('locations_map'),
                 mapController: _mapController,
                 options: MapOptions(
-                  initialCenter: _initialCenter(),
-                  initialZoom: _initialZoom(),
-                  onMapReady: _onMapReady,
+                  initialCenter: _centerOf(current),
+                  initialZoom: 12,
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.drag |
                         InteractiveFlag.flingAnimation |
@@ -101,8 +104,7 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
                             _selectedLayer == WeatherMapLayer.radar ? 7 : 19,
                       ),
                     ),
-                  if (myPosition != null) ..._myLocationLayers(myPosition),
-                  MarkerLayer(markers: _buildMarkers()),
+                  ..._positionLayers(current),
                   const _MapAttribution(),
                 ],
               ),
@@ -118,12 +120,12 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
                 right: 12,
                 bottom: 28,
                 child: _MapControls(
-                  hasPosition: myPosition != null,
                   onZoomIn: () => _zoomBy(1),
                   onZoomOut: () => _zoomBy(-1),
-                  onLocate: _locateMe,
+                  onLocate: () => _recenter(current),
                 ),
               ),
+              _PlaceBanner(location: current),
             ],
           ),
         ),
@@ -131,9 +133,12 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
     );
   }
 
-  List<Widget> _myLocationLayers(GeoPosition position) {
-    final center = LatLng(position.latitude, position.longitude);
-    final accuracy = position.accuracy;
+  LatLng _centerOf(CurrentLocation location) =>
+      LatLng(location.latitude, location.longitude);
+
+  List<Widget> _positionLayers(CurrentLocation location) {
+    final center = _centerOf(location);
+    final accuracy = location.position.accuracy;
     return [
       if (accuracy != null && accuracy > 0)
         CircleLayer(
@@ -171,125 +176,64 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
     _mapController.move(camera.center, zoom);
   }
 
-  void _locateMe() {
-    final position = ref.read(locationControllerProvider).position;
-    if (position == null) return;
-    _mapController.move(
-      LatLng(position.latitude, position.longitude),
-      14,
-    );
+  /// Recentres on [location].
+  void _recenter(CurrentLocation location) {
+    _mapController.move(_centerOf(location), 14);
   }
 
-  String? _activeHint(WeatherMapLayers layers) {
-    if (_selectedLayer == WeatherMapLayer.radar && !layers.hasRadarTiles) {
-      return 'Radar data is currently unavailable.';
-    }
-    return null;
-  }
+  String? _activeHint(WeatherMapLayers layers) =>
+      _selectedLayer == WeatherMapLayer.radar && !layers.hasRadarTiles
+          ? 'Radar data is currently unavailable.'
+          : null;
+}
 
-  // ------------------------------------------------------------------
-  // Markers
-  // ------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Overlays
+// ---------------------------------------------------------------------
 
-  List<Marker> _buildMarkers() {
-    final onSelect = widget.onSelect;
-    final color = Theme.of(context).colorScheme.primary;
-    return [
-      for (final record in widget.locations)
-        Marker(
-          point: LatLng(record.latitude, record.longitude),
-          width: 44,
-          height: 44,
-          alignment: Alignment.topCenter,
-          child: GestureDetector(
-            key: ValueKey('location_marker_${record.locationKey}'),
-            onTap: onSelect == null ? null : () => onSelect(record),
-            child: Icon(Icons.location_on, color: color, size: 40),
+class _PlaceBanner extends StatelessWidget {
+  const _PlaceBanner({required this.location});
+
+  final CurrentLocation location;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.topLeft,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                location.label,
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(color: theme.colorScheme.onSurface),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
           ),
         ),
-    ];
-  }
-
-  // ------------------------------------------------------------------
-  // Camera
-  // ------------------------------------------------------------------
-
-  LatLng _initialCenter() {
-    final anchor = _primaryOrFirst(widget.locations);
-    if (anchor == null) return const LatLng(20, 0);
-    return LatLng(anchor.latitude, anchor.longitude);
-  }
-
-  double _initialZoom() {
-    return widget.locations.length == 1 ? 12 : 6;
-  }
-
-  MonitoredLocationRecord? _primaryOrFirst(
-    List<MonitoredLocationRecord> locations,
-  ) {
-    for (final record in locations) {
-      if (record.isPrimary) return record;
-    }
-    return locations.isEmpty ? null : locations.first;
-  }
-
-  void _onMapReady() {
-    if (_cameraFitDone || widget.locations.length < 2) return;
-    _cameraFitDone = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _fitToBounds();
-    });
-  }
-
-  void _fitToBounds() {
-    final locations = widget.locations;
-    var minLat = locations.first.latitude;
-    var maxLat = minLat;
-    var minLng = locations.first.longitude;
-    var maxLng = minLng;
-    for (final record in locations) {
-      minLat = math.min(minLat, record.latitude);
-      maxLat = math.max(maxLat, record.latitude);
-      minLng = math.min(minLng, record.longitude);
-      maxLng = math.max(maxLng, record.longitude);
-    }
-
-    // Keep a minimum span so coincident points still produce a valid bound.
-    if (maxLat - minLat < 0.02) {
-      minLat -= 0.01;
-      maxLat += 0.01;
-    }
-    if (maxLng - minLng < 0.02) {
-      minLng -= 0.01;
-      maxLng += 0.01;
-    }
-
-    _mapController.fitCamera(
-      CameraFit.bounds(
-        bounds: LatLngBounds(
-          LatLng(minLat, minLng),
-          LatLng(maxLat, maxLng),
-        ),
-        padding: const EdgeInsets.all(72),
       ),
     );
   }
 }
 
-// ---------------------------------------------------------------------
-// Layer selector
-// ---------------------------------------------------------------------
-
 class _MapControls extends StatelessWidget {
   const _MapControls({
-    required this.hasPosition,
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onLocate,
   });
 
-  final bool hasPosition;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onLocate;
@@ -321,16 +265,14 @@ class _MapControls extends StatelessWidget {
           style: style,
           onPressed: onZoomOut,
         ),
-        if (hasPosition) ...[
-          const SizedBox(height: 8),
-          IconButton(
-            key: const ValueKey('map_locate'),
-            icon: const Icon(Icons.my_location),
-            tooltip: 'Show my location',
-            style: style,
-            onPressed: onLocate,
-          ),
-        ],
+        const SizedBox(height: 8),
+        IconButton(
+          key: const ValueKey('map_locate'),
+          icon: const Icon(Icons.my_location),
+          tooltip: 'Show my location',
+          style: style,
+          onPressed: onLocate,
+        ),
       ],
     );
   }
@@ -366,9 +308,8 @@ class _LayerSelector extends StatelessWidget {
                   key: ValueKey('map_layer_${layer.name}'),
                   label: Text(layer.label),
                   selected: selected == layer,
-                  onSelected: layers.supports(layer)
-                      ? (_) => onSelected(layer)
-                      : null,
+                  onSelected:
+                      layers.supports(layer) ? (_) => onSelected(layer) : null,
                 ),
             ],
           ),

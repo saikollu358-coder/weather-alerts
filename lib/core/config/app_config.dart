@@ -7,10 +7,37 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Dart compile-time defines (`--dart-define=KEY=value`) or platform
 /// configuration files (e.g. `google-services.json`, `GoogleService-Info.plist`).
 ///
+/// Reverse-geocoding provider selection.
+///
+/// Open-Meteo's geocoding API is forward-only, so it cannot turn coordinates
+/// into a place name. Reverse lookups therefore go through a dedicated,
+/// keyless, CORS-enabled endpoint that is safe to call straight from the app.
+enum ReverseGeocodingProvider {
+  /// No reverse lookups: place labels fall back to raw coordinates.
+  disabled,
+
+  /// Open-Meteo `/reverse` (retained for parity; the public API has no such
+  /// route, so this resolves to null).
+  openMeteo,
+
+  /// BigDataCloud `reverse-geocode-client`, intended for direct browser use.
+  bigDataCloud;
+
+  /// Parses a `--dart-define` value, defaulting to [bigDataCloud].
+  static ReverseGeocodingProvider parse(String? raw) =>
+      switch (raw?.trim().toLowerCase()) {
+        'disabled' || 'none' || 'off' => ReverseGeocodingProvider.disabled,
+        'openmeteo' || 'open-meteo' => ReverseGeocodingProvider.openMeteo,
+        _ => ReverseGeocodingProvider.bigDataCloud,
+      };
+}
+
 /// Supported define keys (documented in README.md / FIREBASE_SETUP.md):
 ///   WEATHER_ALERTS_ENV                 dev | stage | prod (default: dev)
 ///   WEATHER_ALERTS_WEATHER_API_BASE    Open-Meteo API base URL (default provided)
 ///   WEATHER_ALERTS_GEOCODING_API_BASE  Open-Meteo geocoding base URL
+///   WEATHER_ALERTS_REVERSE_GEOCODING_PROVIDER  bigdatacloud | openmeteo | disabled
+///   WEATHER_ALERTS_REVERSE_GEOCODING_BASE       reverse-geocoding endpoint URL
 ///   WEATHER_ALERTS_OPENWEATHER_API_KEY  OpenWeatherMap key (optional, paid) for weather map layers
 ///   WEATHER_ALERTS_LOGGING             true | false (default: true)
 ///   FIREBASE_WEB_API_KEY               Firebase web API key
@@ -24,6 +51,8 @@ class AppConfig {
     required this.environment,
     required this.weatherApiBaseUrl,
     required this.geocodingApiBaseUrl,
+    required this.reverseGeocodingApiBaseUrl,
+    required this.reverseGeocodingProvider,
     required this.openWeatherApiKey,
     required this.loggingEnabled,
     required this.firebaseWebApiKey,
@@ -42,6 +71,9 @@ class AppConfig {
       : environment = _kEnvironment,
         weatherApiBaseUrl = _kWeatherApiBaseUrl,
         geocodingApiBaseUrl = _kGeocodingApiBaseUrl,
+        reverseGeocodingApiBaseUrl = _kReverseGeocodingApiBaseUrl,
+        reverseGeocodingProvider =
+            ReverseGeocodingProvider.parse(_kReverseGeocodingProvider),
         openWeatherApiKey = _kOpenWeatherApiKey,
         loggingEnabled = _kLoggingEnabled,
         firebaseWebApiKey = _kFirebaseWebApiKey,
@@ -64,6 +96,16 @@ class AppConfig {
   static const String _kGeocodingApiBaseUrl = String.fromEnvironment(
     'WEATHER_ALERTS_GEOCODING_API_BASE',
     defaultValue: 'https://geocoding-api.open-meteo.com/v1',
+  );
+
+  static const String _kReverseGeocodingApiBaseUrl = String.fromEnvironment(
+    'WEATHER_ALERTS_REVERSE_GEOCODING_BASE',
+    defaultValue: 'https://api.bigdatacloud.net/data/reverse-geocode-client',
+  );
+
+  static const String _kReverseGeocodingProvider = String.fromEnvironment(
+    'WEATHER_ALERTS_REVERSE_GEOCODING_PROVIDER',
+    defaultValue: 'bigdatacloud',
   );
 
   static const String _kOpenWeatherApiKey = String.fromEnvironment(
@@ -102,6 +144,13 @@ class AppConfig {
 
   /// Base URL of the weather provider geocoding/search endpoint.
   final String geocodingApiBaseUrl;
+
+  /// Base URL of the reverse-geocoding endpoint used to turn the device's
+  /// coordinates into a human-readable place name.
+  final String reverseGeocodingApiBaseUrl;
+
+  /// Which reverse-geocoding endpoint [reverseGeocodingApiBaseUrl] points at.
+  final ReverseGeocodingProvider reverseGeocodingProvider;
 
   /// OpenWeatherMap API key for optional (paid) weather map tile layers such
   /// as temperature and wind. Empty when not configured; radar tiles from

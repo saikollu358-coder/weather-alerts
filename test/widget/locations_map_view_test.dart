@@ -7,6 +7,7 @@ import 'package:weather_alerts/core/config/app_config.dart';
 import 'package:weather_alerts/core/utils/logger.dart';
 import 'package:weather_alerts/data/repositories/local_repository_providers.dart';
 import 'package:weather_alerts/domain/entities/geo_position.dart';
+import 'package:weather_alerts/domain/enums/location_permission.dart';
 import 'package:weather_alerts/features/location/application/location_providers.dart';
 import 'package:weather_alerts/features/location/presentation/locations_map_view.dart';
 import 'package:weather_alerts/features/location/presentation/locations_tab.dart';
@@ -23,6 +24,8 @@ const _noKeyConfig = AppConfig(
   environment: 'test',
   weatherApiBaseUrl: 'https://api.test.example/v1',
   geocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingApiBaseUrl: 'https://reverse.test.example/reverse',
+  reverseGeocodingProvider: ReverseGeocodingProvider.bigDataCloud,
   openWeatherApiKey: '',
   loggingEnabled: false,
   firebaseWebApiKey: '',
@@ -37,6 +40,8 @@ const _withKeyConfig = AppConfig(
   environment: 'test',
   weatherApiBaseUrl: 'https://api.test.example/v1',
   geocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingApiBaseUrl: 'https://reverse.test.example/reverse',
+  reverseGeocodingProvider: ReverseGeocodingProvider.bigDataCloud,
   openWeatherApiKey: 'test-owm-key-not-real',
   loggingEnabled: false,
   firebaseWebApiKey: '',
@@ -54,20 +59,22 @@ const _sampleRadar = RainViewerRadar(
   ],
 );
 
+/// The tab renders the map shell as soon as permission is granted, so most
+/// tests start GPS before pumping to get a fix on screen.
 Widget _wrap({
   AppConfig config = _noKeyConfig,
-  InMemoryMonitoredLocations? locations,
   RainViewerRadar? radar,
   FakeLocationService? location,
 }) {
   return ProviderScope(
     overrides: [
       appConfigProvider.overrideWithValue(config),
-      monitoredLocationRepositoryProvider.overrideWithValue(
-        locations ?? InMemoryMonitoredLocations(),
-      ),
       alertHistoryRepositoryProvider.overrideWithValue(InMemoryAlertHistory()),
-      weatherServiceProvider.overrideWithValue(FakeWeatherService()),
+      currentLocationRepositoryProvider
+          .overrideWithValue(InMemoryCurrentLocation()),
+      weatherServiceProvider.overrideWithValue(
+        FakeWeatherService(bundle: sampleBundle()),
+      ),
       locationServiceProvider.overrideWithValue(
         location ?? FakeLocationService(),
       ),
@@ -80,14 +87,16 @@ Widget _wrap({
       ),
     ],
     child: const MaterialApp(
-      home: Scaffold(body: LocationsTab(onSelect: _ignoreSelect)),
+      home: Scaffold(body: LocationsTab()),
     ),
   );
 }
 
-void _ignoreSelect(_) {}
-
-bool _hasMarkerAt(List<MarkerLayer> layers, double latitude, double longitude) {
+bool _hasMarkerAt(
+  List<MarkerLayer> layers,
+  double latitude,
+  double longitude,
+) {
   for (final layer in layers) {
     for (final marker in layer.markers) {
       final point = marker.point;
@@ -101,84 +110,94 @@ bool _hasMarkerAt(List<MarkerLayer> layers, double latitude, double longitude) {
 }
 
 void main() {
-  testWidgets('locations tab shows the list view by default', (tester) async {
-    await tester.pumpWidget(_wrap());
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('add_current_location_button')),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey('locations_view_toggle')), findsOneWidget);
-    expect(find.byType(LocationsMapView), findsNothing);
-  });
-
-  testWidgets('toggling to the map view shows the empty message without saved '
-      'locations', (tester) async {
-    await tester.pumpWidget(_wrap());
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Map'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(LocationsMapView), findsOneWidget);
-    expect(find.text('No saved locations to show on the map yet.'),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey('locations_map')), findsNothing);
-  });
-
-  testWidgets('map view renders and radar is selectable by default',
+  testWidgets('renders the map as soon as the pipeline resolves a position',
       (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [
-        sampleLocation(id: 1, name: 'Testville', isPrimary: true),
-        sampleLocation(id: 2, name: 'Riverside', latitude: 3.0),
-      ],
-    );
-    await tester.pumpWidget(_wrap(locations: locations, radar: _sampleRadar));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Map'));
+    await tester.pumpWidget(_wrap(radar: _sampleRadar));
     await tester.pumpAndSettle();
 
     expect(find.byType(LocationsMapView), findsOneWidget);
     expect(find.byKey(const ValueKey('locations_map')), findsOneWidget);
-    expect(find.byKey(const ValueKey('location_marker_1.0,2.0')),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey('location_marker_3.0,2.0')),
-        findsOneWidget);
+    expect(find.byKey(const ValueKey('my_location_marker')), findsOneWidget);
+  });
+
+  testWidgets('renders the map with a my-location marker once GPS returns',
+      (tester) async {
+    final location = FakeLocationService(
+      fix: geoPosition(42.1234, -71.9876),
+      permission: LocationPermissionStatus.granted,
+    );
+    await tester.pumpWidget(_wrap(radar: _sampleRadar, location: location));
+    await tester.pumpAndSettle();
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('locations_map')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('my_location_marker')),
+      findsOneWidget,
+    );
+    final markerLayers =
+        tester.widgetList<MarkerLayer>(find.byType(MarkerLayer)).toList();
+    expect(_hasMarkerAt(markerLayers, 42.1234, -71.9876), isTrue);
+    expect(find.byKey(const ValueKey('map_locate')), findsOneWidget);
+  });
+
+  testWidgets('radar is selectable by default and every layer is offered',
+      (tester) async {
+    final location = FakeLocationService(
+      fix: geoPosition(42.1234, -71.9876),
+      permission: LocationPermissionStatus.granted,
+    );
+    await tester.pumpWidget(_wrap(radar: _sampleRadar, location: location));
+    await tester.pumpAndSettle();
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
+    await tester.pumpAndSettle();
 
     for (final name in WeatherMapLayer.values) {
       expect(find.byKey(ValueKey('map_layer_${name.name}')), findsOneWidget);
     }
-    ChoiceChip radarChip() =>
-        tester.widget(find.byKey(const ValueKey('map_layer_radar')));
-    expect(radarChip().selected, isTrue);
+    final radarChip =
+        tester.widget<ChoiceChip>(find.byKey(const ValueKey('map_layer_radar')));
+    expect(radarChip.selected, isTrue);
   });
 
   testWidgets('radar chip is disabled when radar data is unavailable',
       (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
+    final location = FakeLocationService(
+      fix: geoPosition(42.1234, -71.9876),
+      permission: LocationPermissionStatus.granted,
     );
-    await tester.pumpWidget(_wrap(locations: locations, radar: null));
+    await tester.pumpWidget(_wrap(radar: null, location: location));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Map'));
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
     await tester.pumpAndSettle();
 
-    final radarChip =
-        tester.widget<ChoiceChip>(find.byKey(const ValueKey('map_layer_radar')));
+    final radarChip = tester
+        .widget<ChoiceChip>(find.byKey(const ValueKey('map_layer_radar')));
     expect(radarChip.onSelected, isNull);
+    expect(find.text('Radar data is currently unavailable.'), findsOneWidget);
   });
 
-  testWidgets('temperature and wind need an OpenWeatherMap key',
-      (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
+  testWidgets('temperature and wind need an OpenWeatherMap key', (tester) async {
+    final location = FakeLocationService(
+      fix: geoPosition(42.1234, -71.9876),
+      permission: LocationPermissionStatus.granted,
     );
-    await tester.pumpWidget(_wrap(locations: locations, radar: _sampleRadar));
+    await tester.pumpWidget(_wrap(radar: _sampleRadar, location: location));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Map'));
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
     await tester.pumpAndSettle();
 
     expect(
@@ -195,15 +214,20 @@ void main() {
 
   testWidgets('temperature layer is selectable when a key is configured',
       (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
+    final location = FakeLocationService(
+      fix: geoPosition(42.1234, -71.9876),
+      permission: LocationPermissionStatus.granted,
     );
-    await tester.pumpWidget(
-      _wrap(locations: locations, config: _withKeyConfig, radar: _sampleRadar),
-    );
+    await tester.pumpWidget(_wrap(
+      config: _withKeyConfig,
+      radar: _sampleRadar,
+      location: location,
+    ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Map'));
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
     await tester.pumpAndSettle();
 
     expect(
@@ -221,86 +245,7 @@ void main() {
     expect(radarChip.selected, isFalse);
   });
 
-  testWidgets('toggling back to the list restores the list view',
-      (tester) async {
-    await tester.pumpWidget(_wrap());
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Map'));
-    await tester.pumpAndSettle();
-    expect(find.byType(LocationsMapView), findsOneWidget);
-
-    await tester.tap(find.text('List'));
-    await tester.pumpAndSettle();
-    expect(find.byType(LocationsMapView), findsNothing);
-    expect(find.text('No saved locations yet.'), findsOneWidget);
-  });
-
-  testWidgets('map offers zoom controls and hides locate without a fix',
-      (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
-    );
-    await tester.pumpWidget(_wrap(locations: locations, radar: _sampleRadar));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Map'));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('map_zoom_in')), findsOneWidget);
-    expect(find.byKey(const ValueKey('map_zoom_out')), findsOneWidget);
-    expect(find.byKey(const ValueKey('map_locate')), findsNothing);
-    final markerLayers = tester
-        .widgetList<MarkerLayer>(find.byType(MarkerLayer))
-        .toList();
-    expect(_hasMarkerAt(markerLayers, 42.1234, -71.9876), isFalse);
-
-    await tester.tap(find.byKey(const ValueKey('map_zoom_in')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('map_zoom_out')));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('map shows a my-location marker and locate with a GPS fix',
-      (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
-    );
-    final location = FakeLocationService(
-      fix: geoPosition(42.1234, -71.9876),
-    );
-    await tester.pumpWidget(
-      _wrap(locations: locations, radar: _sampleRadar, location: location),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Map'));
-    await tester.pumpAndSettle();
-
-    final container =
-        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
-    await container.read(locationControllerProvider.notifier).start();
-    await tester.pumpAndSettle();
-
-    expect(container.read(locationControllerProvider).position?.latitude,
-        42.1234);
-    final markerLayers = tester
-        .widgetList<MarkerLayer>(find.byType(MarkerLayer))
-        .toList();
-    expect(_hasMarkerAt(markerLayers, 42.1234, -71.9876), isTrue);
-    expect(find.byKey(const ValueKey('map_locate')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('map_locate')));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('map shows an accuracy circle when the fix reports one',
-      (tester) async {
-    final locations = InMemoryMonitoredLocations(
-      seed: [sampleLocation(id: 1, name: 'Testville', isPrimary: true)],
-    );
+  testWidgets('zoom, locate and the accuracy circle all work', (tester) async {
     final fix = geoPosition(42.1234, -71.9876);
     final location = FakeLocationService(
       fix: GeoPosition(
@@ -309,13 +254,9 @@ void main() {
         accuracy: 250,
         timestamp: fix.timestamp,
       ),
+      permission: LocationPermissionStatus.granted,
     );
-    await tester.pumpWidget(
-      _wrap(locations: locations, radar: _sampleRadar, location: location),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Map'));
+    await tester.pumpWidget(_wrap(radar: _sampleRadar, location: location));
     await tester.pumpAndSettle();
 
     final container =
@@ -323,11 +264,55 @@ void main() {
     await container.read(locationControllerProvider.notifier).start();
     await tester.pumpAndSettle();
 
-    final markerLayers = tester
-        .widgetList<MarkerLayer>(find.byType(MarkerLayer))
-        .toList();
-    expect(_hasMarkerAt(markerLayers, 42.1234, -71.9876), isTrue);
+    expect(find.byKey(const ValueKey('map_zoom_in')), findsOneWidget);
+    expect(find.byKey(const ValueKey('map_zoom_out')), findsOneWidget);
+    expect(find.byKey(const ValueKey('map_locate')), findsOneWidget);
+
     final circleLayer = tester.widget<CircleLayer>(find.byType(CircleLayer));
     expect(circleLayer.circles.single.radius, 250);
+
+    await tester.tap(find.byKey(const ValueKey('map_zoom_in')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('map_zoom_out')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('map_locate')));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a declined permission prompt replaces the map with a gate',
+      (tester) async {
+    final location = FakeLocationService(
+      permission: LocationPermissionStatus.denied,
+    );
+    await tester.pumpWidget(_wrap(location: location));
+    await tester.pumpAndSettle();
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
+    await tester.pumpAndSettle();
+    await container.read(locationControllerProvider.notifier).requestPermission();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LocationsMapView), findsNothing);
+    expect(find.byKey(const ValueKey('allow_location_button')), findsOneWidget);
+  });
+
+  testWidgets('permanently denied permission offers a settings shortcut',
+      (tester) async {
+    final location = FakeLocationService(
+      permission: LocationPermissionStatus.deniedForever,
+    );
+    await tester.pumpWidget(_wrap(location: location));
+    await tester.pumpAndSettle();
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(LocationsTab)));
+    await container.read(locationControllerProvider.notifier).start();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LocationsMapView), findsNothing);
+    expect(find.byKey(const ValueKey('open_settings_button')), findsOneWidget);
   });
 }

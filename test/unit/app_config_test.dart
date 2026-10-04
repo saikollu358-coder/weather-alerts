@@ -33,6 +33,8 @@ void main() {
         environment: 'prod',
         weatherApiBaseUrl: 'https://example.invalid/v1',
         geocodingApiBaseUrl: 'https://geo.example.invalid/v1',
+        reverseGeocodingApiBaseUrl: 'https://reverse.example.invalid/v1',
+        reverseGeocodingProvider: ReverseGeocodingProvider.disabled,
         openWeatherApiKey: '',
         loggingEnabled: false,
         firebaseWebApiKey: '',

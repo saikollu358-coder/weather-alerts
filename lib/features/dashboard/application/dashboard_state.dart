@@ -1,21 +1,21 @@
 import '../../../domain/entities/alert_record.dart';
-import '../../../domain/entities/monitored_location_record.dart';
+import '../../../domain/entities/current_location.dart';
 import '../../../domain/entities/weather/weather_bundle.dart';
 import '../../../services/weather_analysis/weather_analysis.dart';
 
 /// High-level dashboard pipeline phases.
 enum DashboardStatus {
-  /// Resolving the initial location and data on startup.
+  /// Resolving the initial position and data on startup.
   bootstrapping,
 
-  /// No saved locations and no accepted GPS fix yet — show the add-location
-  /// flow before the pipeline can run.
+  /// No usable position yet: permission has not been granted, location
+  /// services are off, or no fix has arrived.
   needsLocation,
 
   /// Weather (and downstream analysis) is loading.
   loading,
 
-  /// The pipeline is fully wired: location -> weather -> analysis -> alerts.
+  /// The pipeline is fully wired: position -> weather -> analysis -> alerts.
   ready,
 
   /// The most recent load failed; [DashboardState.errorMessage] is set.
@@ -37,8 +37,8 @@ class DashboardState {
 
   final DashboardStatus status;
 
-  /// The currently selected monitored location, when known.
-  final MonitoredLocationRecord? location;
+  /// The device's current position, when known.
+  final CurrentLocation? location;
 
   /// Most recently loaded weather, retained across refreshes.
   final WeatherBundle? bundle;
@@ -52,7 +52,7 @@ class DashboardState {
   /// User-safe message for the most recent failure.
   final String? errorMessage;
 
-  /// True once a location is selected and data has been attempted.
+  /// True once a position is known and data has been attempted.
   bool get hasLocation => location != null;
 
   /// Last successful data capture, for the mandatory "Last updated" UI.
@@ -65,7 +65,7 @@ class DashboardState {
 
   DashboardState copyWith({
     DashboardStatus? status,
-    MonitoredLocationRecord? location,
+    CurrentLocation? location,
     WeatherBundle? bundle,
     WeatherAnalysis? analysis,
     List<AlertRecord>? activeAlerts,
@@ -84,5 +84,5 @@ class DashboardState {
 
   @override
   String toString() => 'DashboardState(${status.name}, '
-      'location: ${location?.name}, alerts: ${activeAlerts.length})';
+      'location: ${location?.label}, alerts: ${activeAlerts.length})';
 }

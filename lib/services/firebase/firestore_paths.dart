@@ -1,7 +1,9 @@
 /// Centralized Firestore path builders.
 ///
-/// All user data lives under `users/{uid}` so `firestore.rules` can enforce
-/// per-user ownership with a single pattern (`isOwner(uid)`).
+/// Firestore holds identity and push routing only: the user's profile and the
+/// FCM tokens the alert router needs. Weather, places and alert history stay on
+/// the device, so `firestore.rules` can enforce per-user ownership with a
+/// single pattern (`isOwner(uid)`).
 abstract final class FirestorePaths {
   FirestorePaths._();
 
@@ -14,7 +16,7 @@ abstract final class FirestorePaths {
       'users/$uid/$profileCollection/$profileDocument';
 
   // -----------------------------------------------------------------
-  // Device tokens (Phase 12)
+  // Device tokens (push routing)
   // -----------------------------------------------------------------
 
   /// Sub-collection holding registered FCM tokens for [uid].
@@ -27,17 +29,4 @@ abstract final class FirestorePaths {
   /// The `devices` collection reference path for [uid].
   static String userDevicesCollection(String uid) =>
       'users/$uid/$devicesCollection';
-
-  // -----------------------------------------------------------------
-  // Cloud sync (Phase 14)
-  // -----------------------------------------------------------------
-
-  /// User-owned monitored locations, keyed by `location_key`.
-  static const String locationsCollection = 'locations';
-
-  /// User-owned preferences, keyed by preference key.
-  static const String preferencesCollection = 'preferences';
-
-  /// User-owned alert history, keyed by alert fingerprint.
-  static const String userAlertsCollection = 'user_alerts';
 }

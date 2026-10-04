@@ -5,27 +5,28 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/utils/logger.dart';
 import '../../domain/entities/device_token_record.dart';
+import '../../domain/repositories/current_location_repository.dart';
 import '../../domain/repositories/device_token_repository.dart';
-import '../../domain/repositories/monitored_location_repository.dart';
 import '../../domain/repositories/preference_repository.dart';
 import '../../domain/services/auth_service.dart';
 import '../../services/firebase/fcm_service.dart';
 
-/// Manages FCM device token lifecycle for push notification routing (Phase 12).
+/// Manages FCM device token lifecycle for push notification routing.
 ///
 /// On every app start (and whenever the FCM token rotates), this service:
 /// 1. Obtains the current FCM token.
 /// 2. Persists it under `users/{uid}/devices/{deviceId}` in Firestore.
-/// 3. Keeps the `locationKeys` array in sync with the user's monitored locations.
+/// 3. Keeps the `locationKeys` array in sync with the device's current position.
 ///
 /// The server-side push router reads these documents to decide which devices
-/// should receive alerts for each location.
+/// should receive alerts for each location, so the single key tracked here is
+/// the device's own position rather than any user-saved place.
 class DeviceTokenService {
   DeviceTokenService({
     required this.fcm,
     required this.auth,
     required this.deviceTokens,
-    required this.locations,
+    required this.currentLocation,
     required this.preferences,
     required this.logger,
   });
@@ -33,7 +34,7 @@ class DeviceTokenService {
   final FcmService fcm;
   final AuthService auth;
   final DeviceTokenRepository deviceTokens;
-  final MonitoredLocationRepository locations;
+  final CurrentLocationRepository currentLocation;
   final PreferenceRepository preferences;
   final AppLogger logger;
 
@@ -56,13 +57,13 @@ class DeviceTokenService {
 
   /// Refreshes the `locationKeys` for the current device.
   ///
-  /// Call when the user adds, removes or changes monitored locations.
-  Future<void> syncLocations() async {
+  /// Call whenever the device's position is captured, so push routing follows
+  /// the user as they move.
+  Future<void> syncCurrentLocation() async {
     final uid = auth.currentUser?.uid;
     if (uid == null) return;
     final deviceId = await _getOrCreateDeviceId();
-    final allLocations = await locations.allLocations();
-    final keys = allLocations.map((l) => l.locationKey).toList();
+    final keys = await _currentLocationKeys();
     await deviceTokens.updateLocations(
       uid: uid,
       deviceId: deviceId,
@@ -82,6 +83,16 @@ class DeviceTokenService {
 
   // ------------------------------------------------------------------
 
+  /// The device position keys to advertise to the push router.
+  ///
+  /// Empty until the app has captured a fix in the foreground: advertising an
+  /// unknown key would route alerts to a device that is not there.
+  Future<List<String>> _currentLocationKeys() async {
+    final location = await currentLocation.read();
+    if (location == null) return const [];
+    return [location.locationKey];
+  }
+
   Future<void> _registerCurrentToken() async {
     final uid = auth.currentUser?.uid;
     if (uid == null) {
@@ -98,8 +109,7 @@ class DeviceTokenService {
       return;
     }
     final deviceId = await _getOrCreateDeviceId();
-    final allLocations = await locations.allLocations();
-    final keys = allLocations.map((l) => l.locationKey).toList();
+    final keys = await _currentLocationKeys();
 
     // Idempotent: skip the Firestore write when token and locations are
     // unchanged, so re-runs (app start, auth event) are cheap.
@@ -180,8 +190,7 @@ class DeviceTokenService {
     if (uid == null) return;
     _lastUid = uid;
     final deviceId = await _getOrCreateDeviceId();
-    final allLocations = await locations.allLocations();
-    final keys = allLocations.map((l) => l.locationKey).toList();
+    final keys = await _currentLocationKeys();
 
     await deviceTokens.registerToken(DeviceTokenRecord(
       token: newToken,

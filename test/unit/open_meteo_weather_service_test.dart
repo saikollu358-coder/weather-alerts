@@ -19,6 +19,8 @@ const testConfig = AppConfig(
   environment: 'test',
   weatherApiBaseUrl: 'https://api.test.example/v1',
   geocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingApiBaseUrl: 'https://reverse.test.example/reverse',
+  reverseGeocodingProvider: ReverseGeocodingProvider.bigDataCloud,
   openWeatherApiKey: '',
   loggingEnabled: false,
   firebaseWebApiKey: '',

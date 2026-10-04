@@ -4,9 +4,7 @@ import '../../domain/entities/alert_record.dart';
 import '../../domain/entities/alert_status.dart';
 import '../../domain/entities/cached_forecast_entry.dart';
 import '../../domain/entities/cached_weather_entry.dart';
-import '../../domain/entities/monitored_location_record.dart';
 import '../../domain/entities/notification_state_record.dart';
-import '../../domain/entities/sync_state_record.dart';
 import '../../domain/entities/user_preference.dart';
 import '../datasources/local/database_schema.dart';
 
@@ -124,42 +122,6 @@ abstract final class LocalMappers {
       );
 
   // -------------------------------------------------------------
-  // monitored_locations
-  // -------------------------------------------------------------
-
-  static Map<String, Object?> locationToRow(MonitoredLocationRecord location) => {
-        if (location.id != null) LocalColumns.id: location.id,
-        LocalColumns.name: location.name,
-        LocalColumns.latitude: location.latitude,
-        LocalColumns.longitude: location.longitude,
-        LocalColumns.accuracy: location.accuracy,
-        LocalColumns.source: location.source.name,
-        LocalColumns.isMonitored: location.isMonitored ? 1 : 0,
-        LocalColumns.isPrimary: location.isPrimary ? 1 : 0,
-        LocalColumns.createdAtUtc: _epochMs(location.createdAtUtc),
-        LocalColumns.updatedAtUtc: _epochMs(location.updatedAtUtc),
-        LocalColumns.lastUsedAtUtc: location.lastUsedAtUtc != null
-            ? _epochMs(location.lastUsedAtUtc!)
-            : null,
-      };
-
-  static MonitoredLocationRecord locationFromRow(Map<String, Object?> row) =>
-      MonitoredLocationRecord(
-        id: row[LocalColumns.id]! as int,
-        name: row[LocalColumns.name]! as String,
-        latitude: (row[LocalColumns.latitude] as num).toDouble(),
-        longitude: (row[LocalColumns.longitude] as num).toDouble(),
-        accuracy: (row[LocalColumns.accuracy] as num?)?.toDouble(),
-        source: MonitoredLocationSource.values
-            .byName(row[LocalColumns.source]! as String),
-        isMonitored: (row[LocalColumns.isMonitored] as int) == 1,
-        isPrimary: (row[LocalColumns.isPrimary] as int) == 1,
-        createdAtUtc: _fromEpochMs(row[LocalColumns.createdAtUtc]! as int),
-        updatedAtUtc: _fromEpochMs(row[LocalColumns.updatedAtUtc]! as int),
-        lastUsedAtUtc: _nullableDate(row[LocalColumns.lastUsedAtUtc]),
-      );
-
-  // -------------------------------------------------------------
   // user_preferences
   // -------------------------------------------------------------
 
@@ -201,29 +163,5 @@ abstract final class LocalMappers {
         status: row[LocalColumns.status]! as String,
         updatedAtUtc:
             _fromEpochMs(row[LocalColumns.updatedAtUtc]! as int),
-      );
-
-  // -------------------------------------------------------------
-  // sync_state
-  // -------------------------------------------------------------
-
-  static Map<String, Object?> syncStateToRow(SyncStateRecord record) => {
-        LocalColumns.syncKey: record.syncKey,
-        LocalColumns.value: record.value,
-        LocalColumns.lastAttemptUtc: _epochMs(record.lastAttemptAtUtc),
-        LocalColumns.lastSuccessUtc: record.lastSuccessAtUtc != null
-            ? _epochMs(record.lastSuccessAtUtc!)
-            : null,
-        LocalColumns.status: record.status.name,
-      };
-
-  static SyncStateRecord syncStateFromRow(Map<String, Object?> row) =>
-      SyncStateRecord(
-        syncKey: row[LocalColumns.syncKey]! as String,
-        value: row[LocalColumns.value] as String?,
-        lastAttemptAtUtc: _fromEpochMs(row[LocalColumns.lastAttemptUtc]! as int),
-        lastSuccessAtUtc: _nullableDate(row[LocalColumns.lastSuccessUtc]),
-        status: SyncStatus.values
-            .byName(row[LocalColumns.status]! as String),
       );
 }

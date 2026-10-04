@@ -7,7 +7,6 @@ import 'core/utils/logger.dart';
 import 'data/repositories/local_repository_providers.dart';
 import 'services/firebase/firebase_providers.dart';
 import 'services/notifications/notification_service_providers.dart';
-import 'services/sync/sync_providers.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,10 +30,6 @@ Future<void> main() async {
   // Notifications are optional too: the bootstrap never throws and degrades
   // gracefully on unsupported platforms.
   await container.read(notificationAppBootstrapProvider).initialize();
-
-  // Cloud sync is optional: it starts the moment a signed-in non-guest user
-  // appears and never blocks app startup in local-only mode.
-  await container.read(cloudSyncBootstrapProvider).initialize();
 
   runApp(
     UncontrolledProviderScope(

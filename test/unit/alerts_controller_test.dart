@@ -34,7 +34,7 @@ AlertRecord sampleAlert({
 
 void main() {
   group('AlertsController', () {
-    test('starts by loading into a ready state with empty lists', () async {
+    test('starts by loading into a ready state with no active alerts', () async {
       final container = makePipelineContainer();
       addTearDown(container.dispose);
 
@@ -47,12 +47,17 @@ void main() {
       final state = container.read(alertsControllerProvider);
       expect(state.status, AlertsStatus.ready);
       expect(state.active, isEmpty);
-      expect(state.history, isEmpty);
+      expect(state.hasActive, isFalse);
     });
 
-    test('splits persisted alerts into active and history', () async {
+    test('exposes only active alerts and hides resolved and expired ones',
+        () async {
       final alerts = InMemoryAlertHistory(seed: [
         sampleAlert(fingerprint: 'a'),
+        sampleAlert(
+          fingerprint: 'a2',
+          hazard: 'wind',
+        ),
         sampleAlert(
           fingerprint: 'r',
           status: AlertStatus.resolved,
@@ -74,12 +79,15 @@ void main() {
       );
 
       final state = container.read(alertsControllerProvider);
-      expect(state.active.length, 1);
-      expect(state.active.single.hazard, 'thunderstorm');
-      expect(state.history.length, 2);
+      expect(state.active.length, 2);
       expect(
-        state.history.map((a) => a.hazard),
-        containsAll(['rain', 'heat']),
+        state.active.map((a) => a.hazard),
+        containsAll(['thunderstorm', 'wind']),
+      );
+      expect(state.hasActive, isTrue);
+      expect(
+        state.active.map((a) => a.hazard),
+        isNot(anyOf(contains('rain'), contains('heat'))),
       );
     });
 

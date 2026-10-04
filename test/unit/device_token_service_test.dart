@@ -124,7 +124,7 @@ void main() {
   group('DeviceTokenService', () {
     late _MockFcmService fcm;
     late _InMemoryDeviceTokenRepository repo;
-    late InMemoryMonitoredLocations locations;
+    late InMemoryCurrentLocation currentLocation;
     late InMemoryPreferences preferences;
 
     DeviceTokenService buildService() {
@@ -135,7 +135,7 @@ void main() {
         fcm: fcm,
         auth: localAuth,
         deviceTokens: repo,
-        locations: locations,
+        currentLocation: currentLocation,
         preferences: preferences,
         logger: logger,
       );
@@ -144,8 +144,8 @@ void main() {
     setUp(() {
       fcm = _MockFcmService();
       repo = _InMemoryDeviceTokenRepository();
-      locations = InMemoryMonitoredLocations(
-        seed: [sampleLocation(id: 1, name: 'Home')],
+      currentLocation = InMemoryCurrentLocation(
+        seed: sampleCurrentLocation(label: 'Home'),
       );
       preferences = InMemoryPreferences();
     });
@@ -236,7 +236,7 @@ void main() {
     });
 
     test(
-      'syncLocations updates the location keys on the device document',
+      'syncCurrentLocation replaces the key with the newest position',
       () async {
         when(() => fcm.isAvailable).thenReturn(true);
         when(() => fcm.getToken()).thenAnswer((_) async => 'token-abc');
@@ -246,18 +246,29 @@ void main() {
 
         final service = buildService();
         await service.initialize();
+        expect(repo.records.single.locationKeys, ['1.0,2.0']);
 
-        await locations.addLocation(
-          sampleLocation(id: 2, name: 'Work', latitude: 3.0, longitude: 4.0),
+        await currentLocation.save(
+          sampleCurrentLocation(latitude: 3.0, longitude: 4.0, label: 'Work'),
         );
-        await service.syncLocations();
+        await service.syncCurrentLocation();
 
-        expect(repo.records.single.locationKeys.toSet(), {
-          '1.0,2.0',
-          '3.0,4.0',
-        });
+        expect(repo.records.single.locationKeys, ['3.0,4.0']);
       },
     );
+
+    test('advertises no key until a position has been captured', () async {
+      when(() => fcm.isAvailable).thenReturn(true);
+      when(() => fcm.getToken()).thenAnswer((_) async => 'token-abc');
+      when(
+        () => fcm.onTokenRefresh(),
+      ).thenAnswer((_) => const Stream<String>.empty());
+      currentLocation = InMemoryCurrentLocation();
+
+      await buildService().initialize();
+
+      expect(repo.records.single.locationKeys, isEmpty);
+    });
 
     test('removeCurrentDevice deletes the device document', () async {
       when(() => fcm.isAvailable).thenReturn(true);
@@ -286,7 +297,7 @@ void main() {
         fcm: fcm,
         auth: auth,
         deviceTokens: repo,
-        locations: locations,
+        currentLocation: currentLocation,
         preferences: preferences,
         logger: logger,
       );
@@ -314,7 +325,7 @@ void main() {
         fcm: fcm,
         auth: auth,
         deviceTokens: repo,
-        locations: locations,
+        currentLocation: currentLocation,
         preferences: preferences,
         logger: logger,
       );

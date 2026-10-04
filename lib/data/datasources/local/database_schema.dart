@@ -11,9 +11,13 @@ abstract final class LocalTables {
   static const String cachedWeather = 'cached_weather';
   static const String cachedForecast = 'cached_forecast';
   static const String alertHistory = 'alert_history';
-  static const String monitoredLocations = 'monitored_locations';
   static const String userPreferences = 'user_preferences';
   static const String notificationState = 'notification_state';
+
+  /// Retired in schema v3. Kept only so the v2 -> v3 migration can drop it.
+  static const String monitoredLocations = 'monitored_locations';
+
+  /// Retired in schema v3. Kept only so the v2 -> v3 migration can drop it.
   static const String syncState = 'sync_state';
 }
 
@@ -70,12 +74,12 @@ abstract final class LocalColumns {
   static const String lastSuccessUtc = 'last_success_utc';
 }
 
-/// Database DDL: current schema (v2) plus incremental migrations.
+/// Database DDL: current schema (v3) plus incremental migrations.
 abstract final class DatabaseSchema {
   DatabaseSchema._();
 
   /// Current schema version exposed to sqflite.
-  static const int schemaVersion = 2;
+  static const int schemaVersion = 3;
 
   /// Version that created the base tables (before v2 additions).
   static const int baseSchemaVersion = 1;
@@ -217,6 +221,23 @@ abstract final class DatabaseSchema {
   ];
 
   // ---------------------------------------------------------------
+  // v3 additions: Firestore is identity-only and there are no saved places.
+  // Both retired tables are dropped; the last-known device position lives in
+  // user_preferences instead.
+  // ---------------------------------------------------------------
+
+  static const String dropSyncState =
+      'DROP TABLE IF EXISTS ${LocalTables.syncState}';
+
+  static const String dropMonitoredLocations =
+      'DROP TABLE IF EXISTS ${LocalTables.monitoredLocations}';
+
+  static const List<String> v3Statements = [
+    dropSyncState,
+    dropMonitoredLocations,
+  ];
+
+  // ---------------------------------------------------------------
   // Entry points
   // ---------------------------------------------------------------
 
@@ -226,6 +247,9 @@ abstract final class DatabaseSchema {
       await db.execute(sql);
     }
     for (final sql in v2Statements) {
+      await db.execute(sql);
+    }
+    for (final sql in v3Statements) {
       await db.execute(sql);
     }
   }
@@ -246,6 +270,12 @@ abstract final class DatabaseSchema {
     // Version 1 -> 2: sync metadata + location last-used tracking.
     if (oldVersion < 2 && newVersion >= 2) {
       for (final sql in v2Statements) {
+        await db.execute(sql);
+      }
+    }
+    // Version 2 -> 3: cloud sync metadata and saved locations are gone.
+    if (oldVersion < 3 && newVersion >= 3) {
+      for (final sql in v3Statements) {
         await db.execute(sql);
       }
     }

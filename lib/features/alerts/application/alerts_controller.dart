@@ -3,16 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../../core/utils/logger.dart';
 import '../../../data/repositories/local_repository_providers.dart';
-import '../../../domain/entities/alert_status.dart';
 import 'alerts_state.dart';
 
 /// Owns alert listing for the alerts tab.
 ///
 /// Widgets never touch the alert repository; they watch
 /// [alertsControllerProvider] and call [refresh] / [acknowledge].
+///
+/// Only currently-active alerts are exposed. Resolved and expired records stay
+/// in the local store because the ingest pipeline needs them for deduplication
+/// and escalation tracking, but they are not part of this tab.
 class AlertsController extends Notifier<AlertsState> {
-  static const int _historyLimit = 50;
-
   final String _unexpectedMessage = 'Could not load alerts.';
 
   @override
@@ -23,23 +24,13 @@ class AlertsController extends Notifier<AlertsState> {
     return const AlertsState.loading();
   }
 
-  /// Reloads active + history lists from the repository.
+  /// Reloads the active alerts from the repository.
   Future<void> refresh() async {
     final repository = ref.read(alertHistoryRepositoryProvider);
     final logger = ref.read(appLoggerProvider);
     try {
       final active = await repository.activeAlerts(limit: 50);
-      final resolved =
-          await repository.alerts(status: AlertStatus.resolved, limit: _historyLimit);
-      final expired =
-          await repository.alerts(status: AlertStatus.expired, limit: _historyLimit);
-      final history = [...resolved, ...expired]
-        ..sort((a, b) => b.updatedAtUtc.compareTo(a.updatedAtUtc));
-      _set(AlertsState(
-        status: AlertsStatus.ready,
-        active: active,
-        history: history.take(_historyLimit).toList(),
-      ));
+      _set(AlertsState(status: AlertsStatus.ready, active: active));
     } on AppException catch (e) {
       _set(AlertsState(status: AlertsStatus.error, errorMessage: e.message));
     } catch (e) {

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../domain/entities/current_location.dart';
 import '../../../domain/entities/weather/daily_forecast.dart';
 import '../../../domain/entities/weather/hourly_forecast.dart';
 import '../../../domain/entities/weather/weather_snapshot.dart';
@@ -16,11 +17,12 @@ import '../../notifications/presentation/notification_permission_banner.dart';
 import '../application/dashboard_providers.dart';
 import '../application/dashboard_state.dart';
 
-/// Home tab of the Phase 7 dashboard: the weather-risk assessment pipeline.
+/// Home tab of the dashboard: the weather-risk assessment for wherever the
+/// device currently is.
 ///
-/// Renders location -> weather -> forecast -> analysis -> risk for the
-/// selected location, with the mandatory "Last updated:" timestamp and stale
-/// indicator, plus the add-location permission flow when no location exists.
+/// Renders position -> weather -> forecast -> analysis -> risk, with the
+/// mandatory "Last updated:" timestamp and stale indicator. There is no
+/// location picker: the app asks for permission once and then follows the GPS.
 class DashboardHomeTab extends ConsumerStatefulWidget {
   const DashboardHomeTab({
     super.key,
@@ -36,7 +38,7 @@ class DashboardHomeTab extends ConsumerStatefulWidget {
 }
 
 class _DashboardHomeTabState extends ConsumerState<DashboardHomeTab> {
-  bool _autoLocationPrompted = false;
+  bool _permissionRequested = false;
 
   @override
   Widget build(BuildContext context) {
@@ -45,43 +47,35 @@ class _DashboardHomeTabState extends ConsumerState<DashboardHomeTab> {
     final hasContent =
         dashboard.bundle != null && dashboard.analysis != null;
 
-    // Right after sign-in, when the user has no saved location yet, ask for
-    // location permission once so the app can show the exact current position.
-    if (!_autoLocationPrompted &&
+    // Ask for location permission as soon as the app is open without a fix.
+    // There is nothing else to configure first, so this happens once per
+    // session.
+    if (!_permissionRequested &&
         dashboard.status == DashboardStatus.needsLocation &&
         locationState.status == LocationStatus.unknown) {
-      _autoLocationPrompted = true;
+      _permissionRequested = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ref
-            .read(dashboardControllerProvider.notifier)
-            .promptForCurrentLocation();
+        ref.read(dashboardControllerProvider.notifier).requestPermission();
       });
     }
 
-    Future<void> addCurrent() =>
-        ref.read(dashboardControllerProvider.notifier).useCurrentGps();
-    Future<void> requestPermission() => ref
-        .read(dashboardControllerProvider.notifier)
-        .requestPermissionAndUseGps();
-    Future<void> openSettings() =>
-        ref.read(dashboardControllerProvider.notifier).openSettings();
-    void retry() => ref.read(dashboardControllerProvider.notifier).retry();
-    Future<void> refresh() =>
-        ref.read(dashboardControllerProvider.notifier).refresh();
+    final controller = ref.read(dashboardControllerProvider.notifier);
+    Future<void> requestPermission() => controller.requestPermission();
+    void openSettings() => controller.openSettings();
+    void retry() => controller.retry();
+    Future<void> refresh() => controller.refresh();
 
     if (!hasContent) {
       switch (dashboard.status) {
         case DashboardStatus.bootstrapping:
         case DashboardStatus.loading:
-          return _LoadingView(label: dashboard.location?.name);
+          return _LoadingView(label: dashboard.location?.label);
         case DashboardStatus.needsLocation:
           return _NeedsLocationPanel(
             locationState: locationState,
-            onAddCurrent: addCurrent,
             onRequestPermission: requestPermission,
             onOpenSettings: openSettings,
-            onOpenLocations: widget.onOpenLocations,
           );
         case DashboardStatus.error:
           return _ErrorView(
@@ -173,17 +167,13 @@ class _ErrorView extends StatelessWidget {
 class _NeedsLocationPanel extends StatelessWidget {
   const _NeedsLocationPanel({
     required this.locationState,
-    required this.onAddCurrent,
     required this.onRequestPermission,
     required this.onOpenSettings,
-    this.onOpenLocations,
   });
 
   final LocationState locationState;
-  final VoidCallback onAddCurrent;
   final VoidCallback onRequestPermission;
   final VoidCallback onOpenSettings;
-  final VoidCallback? onOpenLocations;
 
   @override
   Widget build(BuildContext context) {
@@ -195,38 +185,21 @@ class _NeedsLocationPanel extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add_location_alt_outlined,
-                size: 56, color: scheme.primary),
+            Icon(Icons.my_location, size: 56, color: scheme.primary),
             const SizedBox(height: 16),
-            Text('Add a location to start',
+            Text('Turn on location',
                 style: theme.textTheme.titleLarge,
                 textAlign: TextAlign.center),
             const SizedBox(height: 8),
             Text(
-              'Weather risk assessment needs a place to monitor. You can use '
-              'your current GPS position or a saved location.',
+              'Weather alerts are based on where you are right now. Allow '
+              'location access and this app will follow you automatically.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 24),
-            if (locationState.status == LocationStatus.ready) ...[
-              Text(
-                'Location access granted. Save your current position to start '
-                'monitoring weather here.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: scheme.primary),
-              ),
-              const SizedBox(height: 12),
-            ],
             ..._permissionControls(theme),
-            const SizedBox(height: 8),
-            if (onOpenLocations != null)
-              TextButton(
-                onPressed: onOpenLocations,
-                child: const Text('Choose from saved locations'),
-              ),
           ],
         ),
       ),
@@ -281,14 +254,14 @@ class _NeedsLocationPanel extends StatelessWidget {
                 ?.copyWith(color: theme.colorScheme.error),
           ),
         ];
-      case LocationStatus.unknown:
       case LocationStatus.ready:
+      case LocationStatus.unknown:
         return [
           FilledButton.icon(
             key: const ValueKey('use_current_location_button'),
-            onPressed: onAddCurrent,
+            onPressed: onRequestPermission,
             icon: const Icon(Icons.my_location),
-            label: const Text('Use my current GPS location'),
+            label: const Text('Use my current location'),
           ),
         ];
     }
@@ -369,25 +342,29 @@ class _PipelineView extends StatelessWidget {
 class _LocationCard extends StatelessWidget {
   const _LocationCard({required this.location, this.onOpenLocations});
 
-  final dynamic location;
+  final CurrentLocation location;
   final VoidCallback? onOpenLocations;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final accuracy = location.position.accuracy;
     return Card(
       child: ListTile(
-        leading: const Icon(Icons.place_outlined),
-        title: Text(location.name, style: theme.textTheme.titleMedium),
+        leading: const Icon(Icons.my_location),
+        title: Text(location.label, style: theme.textTheme.titleMedium),
         subtitle: Text(
           '${location.latitude.toStringAsFixed(4)}, '
-          '${location.longitude.toStringAsFixed(4)}',
+          '${location.longitude.toStringAsFixed(4)}'
+          '${accuracy != null ? ' · ±${accuracy.round()} m' : ''}',
         ),
+        isThreeLine: true,
         trailing: onOpenLocations == null
             ? null
-            : OutlinedButton(
+            : IconButton(
+                icon: const Icon(Icons.map_outlined),
+                tooltip: 'Show on map',
                 onPressed: onOpenLocations,
-                child: const Text('Change'),
               ),
       ),
     );

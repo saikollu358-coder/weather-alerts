@@ -1,11 +1,12 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/errors/app_exception.dart';
 import '../../../core/utils/logger.dart';
-import '../../../data/repositories/local_repository_providers.dart';
-import '../../../domain/entities/monitored_location_record.dart';
-import '../../../domain/enums/location_permission.dart';
-import '../../../services/location/location_service_providers.dart';
+import '../../../domain/entities/current_location.dart';
+import '../../../services/firebase/device_token_providers.dart';
 import '../../../services/weather_analysis/weather_analysis.dart';
 import '../../alerts/application/alerts_providers.dart';
 import '../../location/application/location_providers.dart';
@@ -15,15 +16,25 @@ import '../../weather/application/weather_state.dart';
 import 'dashboard_providers.dart';
 import 'dashboard_state.dart';
 
-/// Orchestrates the Phase 7 dashboard pipeline for the active location:
+/// Distance in meters the device must move before the weather pipeline reloads.
 ///
-///   location -> weather (WeatherController) -> analysis (weatherAnalysisProvider)
+/// Below this the change is inside GPS noise, so re-fetching would burn API
+/// calls without telling the user anything new.
+const double kReloadOnMoveMeters = 500;
+
+/// Orchestrates the dashboard pipeline for the device's current position:
+///
+///   position -> weather (WeatherController) -> analysis (weatherAnalysisProvider)
 ///            -> alerts (AlertIngestUseCase) -> DashboardState
 ///
-/// Widgets never compose this manually; they watch [dashboardControllerProvider]
-/// and call [selectLocation] / [useCurrentGps] / [refresh] etc.
+/// There is no location selection: the only location is wherever the device is.
+/// Widgets watch [dashboardControllerProvider] and call [refresh], [retry],
+/// [requestPermission] or [openSettings].
 class DashboardController extends Notifier<DashboardState> {
   DateTime? _lastIngestedAnalysisAt;
+
+  /// Position the current bundle was fetched for, used by the move threshold.
+  CurrentLocation? _loadedLocation;
 
   @override
   DashboardState build() {
@@ -32,190 +43,168 @@ class DashboardController extends Notifier<DashboardState> {
     ref.listen(weatherControllerProvider, (previous, next) {
       _syncFromWeather(next);
     });
+    // Follow the device: every new fix updates the displayed position and, if
+    // the user has moved far enough, re-runs the weather pipeline.
+    ref.listen(locationControllerProvider, (previous, next) {
+      if (next.status == LocationStatus.ready) {
+        _applyLatestFix();
+      }
+    });
     _bootstrap();
     return const DashboardState.bootstrapping();
   }
 
-  /// Selects a saved location to monitor and loads its weather.
-  Future<void> selectLocation(MonitoredLocationRecord record) async {
-    final repository = ref.read(monitoredLocationRepositoryProvider);
-    try {
-      if (record.id != null) {
-        final at = DateTime.now().toUtc();
-        await repository.touchLastUsed(record.id!, at: at);
-        await repository.setPrimary(record.id!);
-      }
-      _set(DashboardState(
-        status: DashboardStatus.loading,
-        location: record,
-        bundle: state.bundle,
-        analysis: state.analysis,
-        activeAlerts: state.activeAlerts,
-      ));
-      await _loadWeather(record);
-    } on AppException catch (e) {
-      _set(DashboardState(
-        status: DashboardStatus.error,
-        location: record,
-        errorMessage: e.message,
-      ));
-    }
-  }
+  // ------------------------------------------------------------------
+  // Public actions
+  // ------------------------------------------------------------------
 
-  /// Onboarding entry point shown right after sign-in when no location exists
-  /// yet: requests location permission (without saving anything) so the app can
-  /// show the exact current position on the map. Saving still happens through
-  /// [useCurrentGps].
+  /// Asks for location permission, resolving the position when granted.
   ///
-  /// Returns true when location access was granted/resolved. On grant the home
-  /// panel can offer "Use my current GPS location" and the Locations map shows
-  /// the live fix.
-  Future<bool> promptForCurrentLocation() async {
-    final controller = ref.read(locationControllerProvider.notifier);
-    final service = ref.read(locationServiceProvider);
-    try {
-      if (await service.permissionStatus() ==
-          LocationPermissionStatus.granted) {
-        await controller.start();
-        return ref.read(locationControllerProvider).isReady;
-      }
-    } catch (e) {
-      ref.read(appLoggerProvider).warning(
-          'DashboardController', 'permission check failed: ${e.runtimeType}');
-    }
-    return controller.requestPermission();
+  /// Called automatically right after sign-in so the first screen the user
+  /// sees is the location prompt rather than an empty dashboard.
+  Future<void> requestPermission() async {
+    final granted = await ref.read(locationControllerProvider.notifier).requestPermission();
+    if (!granted || !ref.mounted) return;
+    await _captureAndLoad();
   }
 
-  /// Starts the GPS permission flow and, when a fix is available, saves and
-  /// selects the current position. Returns the saved location, or null when
-  /// the user still needs to grant permission (watch `locationController`).
-  ///
-  /// When permission is not yet granted this explicitly triggers the OS/browser
-  /// permission prompt (so "Add current location" always asks), then captures
-  /// an accurate device fix. Saving also reverse-geocodes the place name from
-  /// the returned coordinates (see `SaveCurrentLocationUseCase`).
-  Future<MonitoredLocationRecord?> useCurrentGps({String? name}) async {
-    final location = ref.read(locationControllerProvider.notifier);
-    final service = ref.read(locationServiceProvider);
-    try {
-      final permission = await service.permissionStatus();
-      switch (permission) {
-        case LocationPermissionStatus.granted:
-          await location.start();
-        case LocationPermissionStatus.denied:
-          if (!await location.requestPermission()) return null;
-        case LocationPermissionStatus.deniedForever:
-          return null;
-      }
-    } catch (e) {
-      ref.read(appLoggerProvider).warning(
-          'DashboardController', 'permission check failed: ${e.runtimeType}');
-      return null;
-    }
-    final status = ref.read(locationControllerProvider).status;
-    if (status != LocationStatus.ready) return null;
-    return _saveAndSelectCurrent(name: name);
+  /// Re-reads GPS and refreshes weather, bypassing every cache.
+  Future<void> refresh() async {
+    await _captureAndLoad(forceRefresh: true);
   }
 
-  /// Requests location permission (after a prior denial) and, when granted,
-  /// runs the current-location flow.
-  Future<MonitoredLocationRecord?> requestPermissionAndUseGps() async {
-    final location = ref.read(locationControllerProvider.notifier);
-    final granted = await location.requestPermission();
-    if (!granted) return null;
-    return _saveAndSelectCurrent();
+  /// Retries after an error.
+  Future<void> retry() async {
+    await _captureAndLoad(forceRefresh: true);
   }
 
   /// Opens OS settings from the permanently-denied state.
   Future<void> openSettings() =>
       ref.read(locationControllerProvider.notifier).openSettings();
 
-  /// Force-refreshes the current location's weather.
-  Future<void> refresh() async {
-    final location = state.location;
-    if (location == null) return;
-    await _loadWeather(location, forceRefresh: true);
-  }
-
-  /// Retries after an error (weather load or location selection).
-  Future<void> retry() async {
-    final location = state.location;
-    if (location != null) {
-      await selectLocation(location);
-    } else {
-      await _bootstrap();
-    }
-  }
-
   // ------------------------------------------------------------------
 
   Future<void> _bootstrap() async {
-    final repository = ref.read(monitoredLocationRepositoryProvider);
-    try {
-      final primary = await repository.primaryLocation();
-      if (primary != null) {
-        await selectLocation(primary);
-        return;
-      }
-      final all = await repository.allLocations();
-      if (all.isNotEmpty) {
-        await selectLocation(all.first);
-        return;
-      }
+    // Show the last known position immediately so a returning user never sees
+    // an empty screen while the GPS radio warms up.
+    final cached = await ref.read(resolveCurrentLocationProvider).lastKnown();
+    if (!ref.mounted) return;
+    if (cached != null) {
+      _loadedLocation = cached;
+      _set(state.copyWith(
+        status: DashboardStatus.loading,
+        location: cached,
+      ));
+      await _loadWeather(cached);
+    }
+
+    await ref.read(locationControllerProvider.notifier).start();
+    if (!ref.mounted) return;
+
+    final locationState = ref.read(locationControllerProvider);
+    if (locationState.position != null ||
+        locationState.status == LocationStatus.ready) {
+      // Either a fix already arrived, or permission is granted and the first
+      // one is still on its way. Read GPS directly in both cases rather than
+      // asking a user who already granted access to grant it again.
+      await _captureAndLoad();
+    } else if (cached == null) {
       _set(const DashboardState(status: DashboardStatus.needsLocation));
+    }
+  }
+
+  /// Applies the newest streamed fix to state, reloading weather only when the
+  /// device has actually moved. Wired to [locationControllerProvider] so the
+  /// dashboard follows the user without any polling.
+  Future<void> _applyLatestFix() async {
+    try {
+      final fix = ref.read(locationControllerProvider).position;
+      if (fix == null) return;
+      await _captureAndLoad();
     } on AppException catch (e) {
-      _set(DashboardState(status: DashboardStatus.error, errorMessage: e.message));
-    } catch (e) {
-      ref.read(appLoggerProvider).warning(
-          'DashboardController', 'bootstrap failed: ${e.runtimeType}');
-      _set(DashboardState(
-        status: DashboardStatus.error,
-        errorMessage: 'Could not initialize the weather dashboard.',
+      _set(state.copyWith(
+        status: state.hasLocation ? state.status : DashboardStatus.error,
+        errorMessage: e.message,
       ));
     }
   }
 
-  Future<MonitoredLocationRecord?> _saveAndSelectCurrent({String? name}) async {
+  Future<void> _captureAndLoad({bool forceRefresh = false}) async {
+    final resolver = ref.read(resolveCurrentLocationProvider);
+    final CurrentLocation location;
     try {
-      final saved = await ref
-          .read(saveCurrentLocationProvider)
-          .run(name: name);
-      if (saved.id != null) {
-        await ref.read(monitoredLocationRepositoryProvider).setPrimary(saved.id!);
-      }
-      await selectLocation(saved);
-      return saved;
+      location = await resolver.run();
     } on AppException catch (e) {
-      _set(DashboardState(
-        status: DashboardStatus.error,
-        location: state.location,
-        bundle: state.bundle,
-        analysis: state.analysis,
+      _set(state.copyWith(
+        status: state.hasLocation ? state.status : DashboardStatus.error,
         errorMessage: e.message,
       ));
-      return null;
+      return;
     } catch (e) {
       ref.read(appLoggerProvider).warning(
-          'DashboardController', 'save current location failed: ${e.runtimeType}');
-      _set(DashboardState(
-        status: DashboardStatus.error,
-        location: state.location,
-        errorMessage: 'Could not add the current location.',
+          'DashboardController', 'position capture failed: ${e.runtimeType}');
+      _set(state.copyWith(
+        status: state.hasLocation ? state.status : DashboardStatus.error,
+        errorMessage: 'Could not determine your current location.',
       ));
-      return null;
+      return;
     }
+    if (!ref.mounted) return;
+
+    // Always surface the freshest position, even when the weather is reused.
+    _set(state.copyWith(
+      location: location,
+      clearError: true,
+    ));
+
+    // Keep FCM routing pointed at the current position so background pushes
+    // reach the device. Best-effort: push registration is unavailable in
+    // local-only mode and must never break the foreground weather pipeline.
+    _syncPushRouting();
+
+    if (!forceRefresh && !_movedFarEnough(location)) return;
+    await _loadWeather(location, forceRefresh: forceRefresh);
+  }
+
+  /// Republishes the device's FCM routing key for the captured position.
+  void _syncPushRouting() {
+    try {
+      ref.read(deviceTokenServiceProvider).syncCurrentLocation().ignore();
+    } catch (e) {
+      ref.read(appLoggerProvider).debug(
+        'DashboardController',
+        'push routing sync skipped: ${e.runtimeType}',
+      );
+    }
+  }
+
+  bool _movedFarEnough(CurrentLocation next) {
+    final previous = _loadedLocation;
+    if (previous == null) return true;
+    return _distanceMeters(previous, next) >= kReloadOnMoveMeters;
+  }
+
+  static double _distanceMeters(CurrentLocation a, CurrentLocation b) {
+    // Equirectangular approximation: accurate well beyond the few-hundred-meter
+    // threshold it is used for, and avoids a spherical trigonometry dependency.
+    const earthRadiusMeters = 6371000.0;
+    final meanLatRad = (a.latitude + b.latitude) / 2 * math.pi / 180;
+    final dx = (b.longitude - a.longitude) * math.pi / 180 * math.cos(meanLatRad);
+    final dy = (b.latitude - a.latitude) * math.pi / 180;
+    return math.sqrt(dx * dx + dy * dy) * earthRadiusMeters;
   }
 
   Future<void> _loadWeather(
-    MonitoredLocationRecord record, {
+    CurrentLocation location, {
     bool forceRefresh = false,
   }) async {
     await ref.read(weatherControllerProvider.notifier).load(
-          locationKey: record.locationKey,
-          latitude: record.latitude,
-          longitude: record.longitude,
+          locationKey: location.locationKey,
+          latitude: location.latitude,
+          longitude: location.longitude,
           forceRefresh: forceRefresh,
         );
+    if (ref.mounted) _loadedLocation = location;
   }
 
   void _syncFromWeather(WeatherState weather) {

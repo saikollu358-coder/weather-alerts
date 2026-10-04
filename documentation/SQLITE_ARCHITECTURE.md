@@ -1,16 +1,20 @@
-# SQLite Offline-First Storage (Phase 4)
+# SQLite Offline-First Storage
 
-The app persists weather cache, alert history, monitored locations, user
-preferences, notification delivery state and sync metadata locally with
-SQLite via `sqflite` on native targets (Android/desktop). This keeps the app
-usable offline and in the Firebase-optional local-only guest mode.
+The app persists weather cache, alert history, user preferences and
+notification delivery state locally with SQLite via `sqflite` on native targets
+(Android/desktop). This keeps the app usable offline and in the Firebase-optional
+local-only guest mode.
+
+The device's last known position is **not** a table: it is a single preference
+(`last_known_location`) holding a JSON blob, because there is only ever one
+position and nothing to query.
 
 ## Layer overview
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| Entities | `lib/domain/entities/` | Immutable domain records (`CachedWeatherEntry`, `AlertRecord`, `MonitoredLocationRecord`, `UserPreference`, `NotificationStateRecord`, `SyncStateRecord`, `AlertStatus`). |
-| Repository interfaces | `lib/domain/repositories/` | Use-case-facing contracts, e.g. `WeatherCacheRepository`, `AlertHistoryRepository`. |
+| Entities | `lib/domain/entities/` | Immutable domain records (`CachedWeatherEntry`, `AlertRecord`, `CurrentLocation`, `UserPreference`, `NotificationStateRecord`, `AlertStatus`). |
+| Repository interfaces | `lib/domain/repositories/` | Use-case-facing contracts, e.g. `WeatherCacheRepository`, `AlertHistoryRepository`, `CurrentLocationRepository`. |
 | Repositories | `lib/data/repositories/*_impl.dart` | Map entities <-> rows through `LocalMappers`, implement upserts/queries, fingerprint dedupe and cooldown logic. |
 | Database abstraction | `lib/data/datasources/local/local_database.dart` | Platform-agnostic `LocalDatabase` surface (`query/insert/update/delete/transaction/close/deleteDatabase`). |
 | IO adapter | `lib/data/datasources/local/local_database_io.dart` | `SqfliteDatabase` backed by `sqflite`, compiled only where `dart:io` exists. |
@@ -18,13 +22,13 @@ usable offline and in the Firebase-optional local-only guest mode.
 | Factory | `lib/data/datasources/local/local_database_factory.dart` | Conditional import (`dart.library.io`) selecting the adapter. |
 | Schema/DDL | `lib/data/datasources/local/database_schema.dart` | Table/column constants, DDL, migration steps. |
 | Mappers | `lib/data/models/local_models.dart` | `LocalMappers` convert records <-> maps. |
-| Providers | `lib/data/repositories/local_repository_providers.dart` | Riverpod providers for the DB plus all six repositories. |
+| Providers | `lib/data/repositories/local_repository_providers.dart` | Riverpod providers for the DB plus all repositories. |
 
 Storage failures surface as user-safe errors from
 `lib/core/errors/storage_exception.dart`
 (`DatabaseOpenException`, `StorageWriteException`, `StorageReadException`).
 
-## Schema (current version 2)
+## Schema (current version 3)
 
 All timestamps are stored as **UTC milliseconds since epoch** (integer
 columns). Payloads (`payload`/`value`) are JSON strings.
@@ -33,25 +37,32 @@ columns). Payloads (`payload`/`value`) are JSON strings.
 | --- | --- | --- |
 | `cached_weather` | `location_key` | Snapshot of current weather per location. |
 | `cached_forecast` | `(location_key, forecast_type)` | Hourly/daily forecast slices. |
-| `alert_history` | autoincrement `id`, unique `fingerprint` | All detected/served alerts. |
-| `monitored_locations` | autoincrement `id` | Locations the user monitors; unique index on `(latitude, longitude)`. |
-| `user_preferences` | `pref_key` | Simple key/value settings. |
+| `alert_history` | autoincrement `id`, unique `fingerprint` | All detected/served alerts, including resolved and expired ones used for dedupe/escalation. |
+| `user_preferences` | `pref_key` | Simple key/value settings, including `last_known_location`. |
 | `notification_state` | `fingerprint` | Notification delivery tracking (count, cooldown). |
-| `sync_state` | `sync_key` | Per-domain sync metadata for future Firebase sync (Phase 14+). |
 
 `PRAGMA foreign_keys = ON` is set on open; schema creation is idempotent and
 `ensureOpen()` may be called repeatedly.
 
 ## Migration strategy
 
-`DatabaseSchema.schemaVersion` is 2.
+`DatabaseSchema.schemaVersion` is 3.
 
-* Fresh installs run `onCreate` (base v1 statements + v2 statements).
-* Existing installs run `onUpgrade` incrementally (`oldVersion < 2` applies
-  the v2 statements: `sync_state` table, `monitored_locations.last_used_at_utc`
-  column + index).
-* `onCreateV1` is exposed as a test hook so the v1 -> v2 migration is covered
-  by a unit test (`test/unit/app_database_test.dart`).
+* Fresh installs run `onCreate` (base v1 statements + v2 statements + v3
+  statements).
+* Existing installs run `onUpgrade` incrementally:
+  * `oldVersion < 2` applies the v2 statements (`sync_state` table,
+    `monitored_locations.last_used_at_utc` column + index).
+  * `oldVersion < 3` applies the v3 statements, which **drop** `sync_state` and
+    `monitored_locations`. Both features are retired: Firestore is identity-only
+    and the app has no saved places.
+* `onCreateV1` is exposed as a test hook so the v1 -> v3 migration is covered by
+  a unit test (`test/unit/app_database_test.dart`), including the assertion that
+  user data survived and the retired tables are gone.
+
+Dropping `monitored_locations` is safe because nothing wrote to it once the
+last-known position moved to `user_preferences`; on upgrade the cache key in
+`cached_weather` simply becomes unreachable and ages out.
 
 ## Repository behavior
 
@@ -61,18 +72,16 @@ columns). Payloads (`payload`/`value`) are JSON strings.
   and forecasts for one location only.
 * **Alert history** — deduplicated by `fingerprint`; `activeAlerts` excludes
   `resolved`/`expired`; `updateStatus`/`markResolved` stamp resolution time;
-  `purgeOlderThan` prunes history.
-* **Monitored locations** — unique coordinates enforced via DB index; the
-  conflict is rethrown as an `AppException` so callers can show a friendly
-  message. `setPrimary` runs in a transaction that unsets any other primary
-  first; `allLocations` orders most-recently-used first.
+  `purgeOlderThan` prunes history. The Alerts tab only ever reads
+  `activeAlerts`, but resolved/expired rows stay for the ingest pipeline.
+* **Current location** — `CurrentLocationRepositoryImpl` reads/writes the
+  `last_known_location` preference. Corrupt or absent JSON yields `null` rather
+  than throwing, so a background task never crashes on it.
+* **User preferences** — `read`/`write`/`delete` plus `readBool`/`writeBool`
+  helpers. `device_id` and `last_known_location` live here and never leave the
+  device.
 * **Notification state** — `recordNotification` increments per fingerprint;
   `shouldNotify(fingerprint, cooldown)` gates repeat alerts.
-* **Sync state** — `recordAttempt/Success/Failure` keep last attempt/success
-  timestamps per domain. `value` stores the Phase 14 reconciliation snapshot
-  (`{"snapshot": {key: updatedAtUtcMillis}}`) that lets the
-  `CloudSyncService` (`lib/services/sync/`) detect remote deletions across
-  devices while keeping last-write-wins semantics.
 
 ## Web limitations
 
@@ -85,7 +94,7 @@ during startup so the app still boots on web (read-only, no offline storage).
 
 ```sh
 flutter analyze
-flutter test            # includes unit/app_database_test.dart + 6 repo suites (98 tests)
+flutter test            # includes unit/app_database_test.dart migration coverage
 ```
 
 `test/helpers/test_database.dart` boots sqflite-common-ffi in a temp directory

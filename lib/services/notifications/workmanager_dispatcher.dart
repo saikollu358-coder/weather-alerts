@@ -5,7 +5,7 @@ import '../../core/config/app_config.dart';
 import '../../core/utils/logger.dart';
 import '../../data/datasources/local/local_database_factory.dart';
 import '../../data/repositories/alert_history_repository_impl.dart';
-import '../../data/repositories/monitored_location_repository_impl.dart';
+import '../../data/repositories/current_location_repository_impl.dart';
 import '../../data/repositories/notification_state_repository_impl.dart';
 import '../../data/repositories/preference_repository_impl.dart';
 import '../../data/repositories/weather_cache_repository_impl.dart';
@@ -45,9 +45,13 @@ Future<bool> handleBackgroundCheckTask(
     final db = createPlatformLocalDatabase();
     await db.ensureOpen();
     final alerts = AlertHistoryRepositoryImpl(db: db, logger: logger);
+    final preferences = PreferenceRepositoryImpl(db: db, logger: logger);
     final useCase = BackgroundWeatherCheckUseCase(
-      locations: MonitoredLocationRepositoryImpl(db: db, logger: logger),
-      preferences: PreferenceRepositoryImpl(db: db, logger: logger),
+      currentLocation: CurrentLocationRepositoryImpl(
+        preferences: preferences,
+        logger: logger,
+      ),
+      preferences: preferences,
       weather: OpenMeteoWeatherService(
         config: appConfig,
         client: http.Client(),

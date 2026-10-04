@@ -3,14 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../alerts/presentation/alerts_tab.dart';
-import '../../dashboard/application/dashboard_providers.dart';
 import '../../location/presentation/locations_tab.dart';
 import '../../../routing/app_routes.dart';
 import 'dashboard_home_tab.dart';
 
-/// Post-authentication shell for the Phase 7 dashboard pipeline.
+/// Post-authentication shell for the dashboard pipeline.
 ///
-/// Hosts the three pipeline tabs (home weather, alerts, locations) in an
+/// Hosts the three pipeline tabs (home weather, alerts, location map) in an
 /// [IndexedStack] behind a Material 3 [NavigationBar]. Profile is reachable
 /// from the app bar.
 class DashboardShell extends ConsumerStatefulWidget {
@@ -23,7 +22,7 @@ class DashboardShell extends ConsumerStatefulWidget {
 class _DashboardShellState extends ConsumerState<DashboardShell> {
   int _index = 0;
 
-  static const List<String> _titles = ['Weather', 'Alerts', 'Locations'];
+  static const List<String> _titles = ['Weather', 'Alerts', 'Map'];
 
   @override
   Widget build(BuildContext context) {
@@ -33,12 +32,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
         onOpenAlerts: () => setState(() => _index = 1),
       ),
       const AlertsTab(),
-      LocationsTab(
-        onSelect: (record) {
-          ref.read(dashboardControllerProvider.notifier).selectLocation(record);
-          setState(() => _index = 0);
-        },
-      ),
+      const LocationsTab(),
     ];
 
     return Scaffold(
@@ -78,9 +72,9 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
           ),
           NavigationDestination(
             key: ValueKey('nav_locations'),
-            icon: Icon(Icons.place_outlined),
-            selectedIcon: Icon(Icons.place),
-            label: 'Locations',
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Map',
           ),
         ],
       ),

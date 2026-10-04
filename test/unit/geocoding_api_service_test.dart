@@ -13,6 +13,8 @@ const testConfig = AppConfig(
   environment: 'test',
   weatherApiBaseUrl: 'https://api.test.example/v1',
   geocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingApiBaseUrl: 'https://reverse.test.example/reverse',
+  reverseGeocodingProvider: ReverseGeocodingProvider.bigDataCloud,
   openWeatherApiKey: '',
   loggingEnabled: false,
   firebaseWebApiKey: '',
@@ -22,6 +24,66 @@ const testConfig = AppConfig(
   firebaseWebMessagingSenderId: '',
   firebaseWebAppId: '',
 );
+
+const openMeteoReverseConfig = AppConfig(
+  environment: 'test',
+  weatherApiBaseUrl: 'https://api.test.example/v1',
+  geocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingProvider: ReverseGeocodingProvider.openMeteo,
+  openWeatherApiKey: '',
+  loggingEnabled: false,
+  firebaseWebApiKey: '',
+  firebaseWebAuthDomain: '',
+  firebaseWebProjectId: '',
+  firebaseWebStorageBucket: '',
+  firebaseWebMessagingSenderId: '',
+  firebaseWebAppId: '',
+);
+
+const disabledReverseConfig = AppConfig(
+  environment: 'test',
+  weatherApiBaseUrl: 'https://api.test.example/v1',
+  geocodingApiBaseUrl: 'https://geocode.test.example/v1',
+  reverseGeocodingApiBaseUrl: 'https://reverse.test.example/reverse',
+  reverseGeocodingProvider: ReverseGeocodingProvider.disabled,
+  openWeatherApiKey: '',
+  loggingEnabled: false,
+  firebaseWebApiKey: '',
+  firebaseWebAuthDomain: '',
+  firebaseWebProjectId: '',
+  firebaseWebStorageBucket: '',
+  firebaseWebMessagingSenderId: '',
+  firebaseWebAppId: '',
+);
+
+/// Mirrors the real `reverse-geocode-client` payload, which is a flat object
+/// rather than Open-Meteo's `results` array and has no `elevation` field.
+Map<String, dynamic> bigDataCloudReverseBody() => {
+      'latitude': 18.149,
+      'longitude': 83.371,
+      'continent': 'Asia',
+      'continentCode': 'AS',
+      'countryName': 'India',
+      'countryCode': 'IN',
+      'principalSubdivision': 'Andhra Pradesh',
+      'principalSubdivisionCode': 'IN-AP',
+      'city': 'Vizianagaram',
+      'locality': 'Vizianagaram',
+      'postcode': '',
+      'lookupSource': 'coordinates',
+    };
+
+/// Encodes [body] as a UTF-8 JSON response.
+///
+/// The content-type header matters: without it `http.Response.bytes` defaults
+/// to latin1 and mangles non-ASCII place names.
+http.Response jsonResponse(Object body, {int status = 200}) =>
+    http.Response.bytes(
+      utf8.encode(jsonEncode(body)),
+      status,
+      headers: {'content-type': 'application/json; charset=utf-8'},
+    );
 
 Map<String, dynamic> searchResults() => {
       'results': [
@@ -61,13 +123,16 @@ void main() {
     requests = [];
   });
 
-  geocodingService(http.Response Function(http.Request request) respond) {
+  geocodingService(
+    http.Response Function(http.Request request) respond, [
+    AppConfig config = testConfig,
+  ]) {
     final client = MockClient((request) async {
       requests.add(request);
       return respond(request);
     });
     service = GeocodingApiService(
-      config: testConfig,
+      config: config,
       client: client,
       logger: AppLogger(enabled: false),
     );
@@ -119,22 +184,118 @@ void main() {
     expect(places, isEmpty);
   });
 
-  test('reverseGeocode returns the closest place', () async {
-    geocodingService(
-      (request) => http.Response.bytes(
-        utf8.encode(jsonEncode(searchResults())),
-        200,
-      ),
-    );
+  group('reverseGeocode (BigDataCloud)', () {
+    test('maps the flat payload into a Place', () async {
+      geocodingService((request) => jsonResponse(bigDataCloudReverseBody()));
 
-    final place = await service.reverseGeocode(52.5, 13.4);
-    expect(place, isNotNull);
-    expect(place!.name, 'Berlin');
+      final place = await service.reverseGeocode(18.149, 83.371);
+
+      expect(place, isNotNull);
+      expect(place!.name, 'Vizianagaram');
+      expect(place.region, 'Andhra Pradesh');
+      expect(place.country, 'India');
+      expect(place.countryCode, 'IN');
+      expect(place.displayName, 'Vizianagaram, Andhra Pradesh, India');
+    });
+
+    test('sends coordinates and language to the reverse endpoint', () async {
+      geocodingService((request) => jsonResponse(bigDataCloudReverseBody()));
+
+      await service.reverseGeocode(18.149, 83.371);
+
+      final request = requests.single;
+      expect(request.url.host, 'reverse.test.example');
+      expect(request.url.path, '/reverse');
+      expect(request.url.queryParameters['latitude'], '18.149');
+      expect(request.url.queryParameters['longitude'], '83.371');
+      expect(request.url.queryParameters['localityLanguage'], 'en');
+    });
+
+    test('preserves the caller coordinates rather than the rounded ones',
+        () async {
+      geocodingService((request) => jsonResponse(bigDataCloudReverseBody()));
+
+      final place = await service.reverseGeocode(18.149123, 83.371456);
+
+      expect(place!.latitude, 18.149123);
+      expect(place.longitude, 83.371456);
+    });
+
+    test('falls back through coarse areas when no city is reported', () async {
+      geocodingService(
+        (request) => jsonResponse({
+          'countryName': 'Iceland',
+          'principalSubdivision': 'Höfuðborgarsvæðið',
+        }),
+      );
+
+      final place = await service.reverseGeocode(64.14, -21.94);
+
+      expect(place!.name, 'Höfuðborgarsvæðið');
+      expect(place.region, 'Höfuðborgarsvæðið');
+    });
+
+    test('returns null when the payload carries no usable name', () async {
+      geocodingService((request) => http.Response('{}', 200));
+      expect(await service.reverseGeocode(0, 0), isNull);
+    });
+
+    test('returns null on a non-200 response instead of throwing', () async {
+      geocodingService((request) => http.Response('oops', 500));
+      expect(await service.reverseGeocode(1, 1), isNull);
+    });
+
+    test('returns null on malformed JSON instead of throwing', () async {
+      geocodingService((request) => http.Response('not json', 200));
+      expect(await service.reverseGeocode(1, 1), isNull);
+    });
+
+    test('returns null when the client fails', () async {
+      geocodingService((_) => throw http.ClientException('offline'));
+      expect(await service.reverseGeocode(1, 1), isNull);
+    });
   });
 
-  test('reverseGeocode returns null when nothing is nearby', () async {
-    geocodingService((request) => http.Response('{"results":[]}', 200));
-    expect(await service.reverseGeocode(0, 0), isNull);
+  group('reverseGeocode (Open-Meteo)', () {
+    test('parses the results array', () async {
+      geocodingService(
+        (request) => jsonResponse(searchResults()),
+        openMeteoReverseConfig,
+      );
+
+      final place = await service.reverseGeocode(52.5, 13.4);
+
+      expect(place, isNotNull);
+      expect(place!.name, 'Berlin');
+      expect(requests.single.url.path, '/v1/reverse');
+    });
+
+    test('returns null when nothing is nearby', () async {
+      geocodingService(
+        (request) => http.Response('{"results":[]}', 200),
+        openMeteoReverseConfig,
+      );
+      expect(await service.reverseGeocode(0, 0), isNull);
+    });
+
+    test('returns null on a non-200 response instead of throwing', () async {
+      geocodingService(
+        (request) => http.Response('oops', 404),
+        openMeteoReverseConfig,
+      );
+      expect(await service.reverseGeocode(1, 1), isNull);
+    });
+  });
+
+  group('reverseGeocode (disabled)', () {
+    test('returns null without issuing a request', () async {
+      geocodingService(
+        (request) => http.Response('{}', 200),
+        disabledReverseConfig,
+      );
+      expect(await service.reverseGeocode(1, 1), isNull);
+      expect(requests, isEmpty);
+    });
   });
 
   test('non-200 responses raise a user-safe geocoding error', () async {
@@ -148,7 +309,7 @@ void main() {
   test('malformed JSON raises a user-safe geocoding error', () async {
     geocodingService((request) => http.Response('not json', 200));
     await expectLater(
-      service.reverseGeocode(1, 1),
+      service.searchPlaces('Berlin'),
       throwsA(isA<GeocodingException>()),
     );
   });

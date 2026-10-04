@@ -163,8 +163,8 @@ void main() {
             notificationServiceProvider.overrideWithValue(
               FakeNotificationService(),
             ),
-            monitoredLocationRepositoryProvider.overrideWithValue(
-              InMemoryMonitoredLocations(),
+            currentLocationRepositoryProvider.overrideWithValue(
+              InMemoryCurrentLocation(),
             ),
             alertHistoryRepositoryProvider.overrideWithValue(
               InMemoryAlertHistory(),

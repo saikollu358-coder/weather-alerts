@@ -16,13 +16,13 @@ final deviceTokenRepositoryProvider = Provider<DeviceTokenRepository>(
   ),
 );
 
-/// The Phase 12 device token service that manages FCM token lifecycle.
+/// The device token service that manages FCM token lifecycle.
 final deviceTokenServiceProvider = Provider<DeviceTokenService>(
   (ref) => DeviceTokenService(
     fcm: ref.watch(fcmServiceProvider),
     auth: ref.watch(authServiceProvider),
     deviceTokens: ref.watch(deviceTokenRepositoryProvider),
-    locations: ref.watch(monitoredLocationRepositoryProvider),
+    currentLocation: ref.watch(currentLocationRepositoryProvider),
     preferences: ref.watch(preferenceRepositoryProvider),
     logger: ref.watch(appLoggerProvider),
   ),

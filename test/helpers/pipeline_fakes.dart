@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:weather_alerts/data/repositories/local_repository_providers.dart';
 import 'package:weather_alerts/domain/entities/alert_record.dart';
 import 'package:weather_alerts/domain/entities/alert_status.dart';
+import 'package:weather_alerts/domain/entities/current_location.dart';
 import 'package:weather_alerts/domain/entities/geo_position.dart';
-import 'package:weather_alerts/domain/entities/monitored_location_record.dart';
 import 'package:weather_alerts/domain/entities/notification_state_record.dart';
 import 'package:weather_alerts/domain/entities/place.dart';
 import 'package:weather_alerts/domain/entities/user_preference.dart';
@@ -14,7 +16,7 @@ import 'package:weather_alerts/domain/entities/weather/weather_snapshot.dart';
 import 'package:weather_alerts/domain/enums/location_permission.dart';
 import 'package:weather_alerts/domain/enums/notification_permission.dart';
 import 'package:weather_alerts/domain/repositories/alert_history_repository.dart';
-import 'package:weather_alerts/domain/repositories/monitored_location_repository.dart';
+import 'package:weather_alerts/domain/repositories/current_location_repository.dart';
 import 'package:weather_alerts/domain/repositories/notification_state_repository.dart';
 import 'package:weather_alerts/domain/repositories/preference_repository.dart';
 import 'package:weather_alerts/domain/services/geocoding_service.dart';
@@ -83,6 +85,18 @@ class FakeLocationService implements LocationService {
   @override
   Future<bool> openAppSettings() async => openAppSettingsResult;
 
+  final StreamController<GeoPosition> _fixes =
+      StreamController<GeoPosition>.broadcast();
+
+  /// Pushes a new fix to [positionStream] listeners, simulating movement.
+  ///
+  /// Also updates [fix] so a later [currentPosition] read returns the same
+  /// coordinates, which is what a real device does after streaming a fix.
+  void emit(GeoPosition position) {
+    fix = position;
+    _fixes.add(position);
+  }
+
   @override
   Future<GeoPosition> currentPosition({
     Duration timeout = const Duration(seconds: 30),
@@ -107,7 +121,7 @@ class FakeLocationService implements LocationService {
     Duration? timeLimit,
     double distanceFilter = 0,
   }) =>
-      const Stream.empty();
+      _fixes.stream;
 }
 
 final DateTime _kFixedTimestamp = DateTime.utc(2026, 1, 1, 12);
@@ -137,120 +151,49 @@ class FakeGeocodingService implements GeocodingService {
   }
 }
 
-/// In-memory [MonitoredLocationRepository] with duplicate + primary handling.
-class InMemoryMonitoredLocations implements MonitoredLocationRepository {
-  InMemoryMonitoredLocations({List<MonitoredLocationRecord> seed = const []}) {
-    for (final record in seed) {
-      _records.add(record.copyWith(id: record.id ?? _nextId++));
-    }
-  }
+/// In-memory [CurrentLocationRepository] holding a single last-known position.
+class InMemoryCurrentLocation implements CurrentLocationRepository {
+  InMemoryCurrentLocation({CurrentLocation? seed}) : _stored = seed;
 
-  final List<MonitoredLocationRecord> _records = [];
-  int _nextId = 1;
+  CurrentLocation? _stored;
 
-  /// When set, listing operations throw so controllers can exercise their
-  /// error paths deterministically.
-  bool failLoads = false;
+  /// When set, reads throw so callers can exercise their error paths.
+  bool failReads = false;
+
+  /// The stored position, or null once cleared.
+  CurrentLocation? get stored => _stored;
 
   @override
-  Future<List<MonitoredLocationRecord>> allLocations() async {
-    if (failLoads) throw StateError('boom');
-    final sorted = List.of(_records)
-      ..sort((a, b) {
-        final usedA = a.lastUsedAtUtc ?? a.createdAtUtc;
-        final usedB = b.lastUsedAtUtc ?? b.createdAtUtc;
-        return usedB.compareTo(usedA);
-      });
-    return sorted;
+  Future<CurrentLocation?> read() async {
+    if (failReads) throw StateError('boom');
+    return _stored;
   }
 
   @override
-  Future<MonitoredLocationRecord?> locationById(int id) async {
-    for (final record in _records) {
-      if (record.id == id) return record;
-    }
-    return null;
-  }
+  Future<void> save(CurrentLocation location) async => _stored = location;
 
   @override
-  Future<MonitoredLocationRecord?> byCoordinates(
-      double latitude, double longitude) async {
-    final tolerance = 0.0005;
-    for (final record in _records) {
-      if ((record.latitude - latitude).abs() <= tolerance &&
-          (record.longitude - longitude).abs() <= tolerance) {
-        return record;
-      }
-    }
-    return null;
-  }
-
-  @override
-  Future<int> addLocation(MonitoredLocationRecord record) async {
-    final existing = await byCoordinates(record.latitude, record.longitude);
-    if (existing != null) {
-      throw StateError('duplicate location');
-    }
-    final id = _nextId++;
-    _records.add(record.copyWith(id: id));
-    return id;
-  }
-
-  @override
-  Future<void> updateLocation(MonitoredLocationRecord record) async {
-    final index = _records.indexWhere((r) => r.id == record.id);
-    if (index < 0) return;
-    _records[index] = record;
-  }
-
-  @override
-  Future<void> removeLocation(int id) async {
-    _records.removeWhere((r) => r.id == id);
-  }
-
-  @override
-  Future<void> setMonitored(int id, {required bool monitored}) async {
-    final index = _records.indexWhere((r) => r.id == id);
-    if (index < 0) return;
-    _records[index] = _records[index].copyWith(isMonitored: monitored);
-  }
-
-  @override
-  Future<void> setPrimary(int id) async {
-    for (var i = 0; i < _records.length; i++) {
-      _records[i] = _records[i].copyWith(isPrimary: _records[i].id == id);
-    }
-  }
-
-  @override
-  Future<MonitoredLocationRecord?> primaryLocation() async {
-    for (final record in _records) {
-      if (record.isPrimary) return record;
-    }
-    return null;
-  }
-
-  @override
-  Future<MonitoredLocationRecord?> monitoredLocation() async {
-    for (final record in _records) {
-      if (record.isMonitored) return record;
-    }
-    return null;
-  }
-
-  @override
-  Future<void> touchLastUsed(int id, {DateTime? at}) async {
-    final index = _records.indexWhere((r) => r.id == id);
-    if (index < 0) return;
-    _records[index] = _records[index].copyWith(
-      lastUsedAtUtc: at ?? _kFixedTimestamp,
-      updatedAtUtc: at ?? _kFixedTimestamp,
-    );
-  }
-
-  @override
-  Future<void> clear() async => _records.clear();
+  Future<void> clear() async => _stored = null;
 }
+
+/// Builds a [CurrentLocation] with the given coordinates and label.
+CurrentLocation sampleCurrentLocation({
+  double latitude = 1.0,
+  double longitude = 2.0,
+  String label = 'Testville',
+  DateTime? at,
+}) =>
+    CurrentLocation.fromPosition(
+      GeoPosition(
+        latitude: latitude,
+        longitude: longitude,
+        accuracy: 10,
+        timestamp: at ?? DateTime.utc(2026, 3, 10, 10),
+      ),
+      label: label,
+      capturedAtUtc: at ?? DateTime.utc(2026, 3, 10, 10),
+    );
+
 
 /// In-memory [AlertHistoryRepository] with fingerprint-based deduplication.
 class InMemoryAlertHistory implements AlertHistoryRepository {
@@ -310,6 +253,7 @@ class InMemoryAlertHistory implements AlertHistoryRepository {
 
   @override
   Future<List<AlertRecord>> activeAlerts({int? limit}) async {
+    if (failLoads) throw StateError('boom');
     final active = _records.where((r) => r.isActive).toList()
       ..sort((a, b) => b.updatedAtUtc.compareTo(a.updatedAtUtc));
     if (limit != null && active.length > limit) {
@@ -355,24 +299,6 @@ class InMemoryAlertHistory implements AlertHistoryRepository {
   Future<void> clear() async => _records.clear();
 }
 
-/// A monitored-location record with deterministic timestamps and ids.
-MonitoredLocationRecord sampleLocation({
-  int? id,
-  String name = 'Testville',
-  double latitude = 1.0,
-  double longitude = 2.0,
-  bool isPrimary = false,
-}) {
-  return MonitoredLocationRecord(
-    id: id,
-    name: name,
-    latitude: latitude,
-    longitude: longitude,
-    isPrimary: isPrimary,
-    createdAtUtc: _kFixedTimestamp,
-    updatedAtUtc: _kFixedTimestamp,
-  );
-}
 
 /// A deterministic [WeatherBundle] for pipeline tests.
 ///
@@ -435,7 +361,7 @@ ProviderContainer makePipelineContainer({
   FakeWeatherService? weather,
   FakeLocationService? location,
   FakeGeocodingService? geocoding,
-  InMemoryMonitoredLocations? locations,
+  InMemoryCurrentLocation? currentLocation,
   InMemoryAlertHistory? alerts,
 }) {
   return ProviderContainer(
@@ -449,8 +375,8 @@ ProviderContainer makePipelineContainer({
       geocodingServiceProvider.overrideWithValue(
         geocoding ?? FakeGeocodingService(),
       ),
-      monitoredLocationRepositoryProvider.overrideWithValue(
-        locations ?? InMemoryMonitoredLocations(),
+      currentLocationRepositoryProvider.overrideWithValue(
+        currentLocation ?? InMemoryCurrentLocation(),
       ),
       alertHistoryRepositoryProvider.overrideWithValue(
         alerts ?? InMemoryAlertHistory(),

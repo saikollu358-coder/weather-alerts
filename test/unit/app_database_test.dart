@@ -15,10 +15,11 @@ import '../helpers/test_database.dart';
 
 void main() {
   group('DatabaseSchema', () {
-    test('current schema version is 2 with incremental migrations', () {
-      expect(DatabaseSchema.schemaVersion, 2);
+    test('current schema version is 3 with incremental migrations', () {
+      expect(DatabaseSchema.schemaVersion, 3);
       expect(DatabaseSchema.baseSchemaVersion, 1);
       expect(DatabaseSchema.v2Statements, isNotEmpty);
+      expect(DatabaseSchema.v3Statements, isNotEmpty);
     });
   });
 
@@ -38,13 +39,17 @@ void main() {
         LocalTables.cachedWeather,
         LocalTables.cachedForecast,
         LocalTables.alertHistory,
-        LocalTables.monitoredLocations,
         LocalTables.userPreferences,
         LocalTables.notificationState,
-        LocalTables.syncState,
       ]) {
         expect(await db.tableExists(table), isTrue, reason: table);
       }
+    });
+
+    test('does not create the retired cloud sync or saved location tables',
+        () async {
+      expect(await db.tableExists(LocalTables.syncState), isFalse);
+      expect(await db.tableExists(LocalTables.monitoredLocations), isFalse);
     });
 
     test('ensureOpen is idempotent and reopens after close', () async {
@@ -119,8 +124,10 @@ void main() {
         );
         await migrated.ensureOpen();
 
-        // v2 additions are present.
-        expect(await migrated.tableExists(LocalTables.syncState), isTrue);
+        // The v1 -> v2 -> v3 chain ran: the v2 tables landed and were then
+        // dropped again by v3, since cloud sync and saved places are gone.
+        expect(await migrated.tableExists(LocalTables.syncState), isFalse);
+        expect(await migrated.tableExists(LocalTables.monitoredLocations), isFalse);
         // Existing v1 data survived the migration.
         final rows = await migrated.query(
           LocalTables.userPreferences,

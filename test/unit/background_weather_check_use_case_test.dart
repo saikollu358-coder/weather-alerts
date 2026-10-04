@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:weather_alerts/core/utils/logger.dart';
 import 'package:weather_alerts/domain/entities/alert_record.dart';
 import 'package:weather_alerts/domain/entities/alert_status.dart';
-import 'package:weather_alerts/domain/entities/monitored_location_record.dart';
 import 'package:weather_alerts/domain/entities/notification_state_record.dart';
 import 'package:weather_alerts/features/alerts/application/alert_ingest_use_case.dart';
 import 'package:weather_alerts/features/notifications/application/background_weather_check_use_case.dart';
@@ -23,7 +22,7 @@ void main() {
 
   BackgroundWeatherCheckUseCase buildUseCase({
     required FakeWeatherService weather,
-    InMemoryMonitoredLocations? locations,
+    InMemoryCurrentLocation? currentLocation,
     InMemoryAlertHistory? history,
     InMemoryNotificationState? notificationState,
     InMemoryPreferences? preferences,
@@ -32,8 +31,8 @@ void main() {
     final logger = AppLogger(enabled: false);
     final alerts = history ?? InMemoryAlertHistory();
     return BackgroundWeatherCheckUseCase(
-      locations: locations ??
-          InMemoryMonitoredLocations(seed: [_primaryLocation()]),
+      currentLocation: currentLocation ??
+          InMemoryCurrentLocation(seed: sampleCurrentLocation()),
       preferences: preferences ?? InMemoryPreferences(),
       weather: weather,
       evaluator: evaluator,
@@ -68,15 +67,13 @@ void main() {
       expect(notifier.showCount, 0);
     });
 
-    test('is a no-op without a primary location', () async {
+    test('is a no-op when no position has been captured yet', () async {
       final weather = FakeWeatherService(bundle: sampleBundle(atUtc: t0));
-      final locations = InMemoryMonitoredLocations(
-        seed: [sampleLocation(id: 1)],
-      );
+      final currentLocation = InMemoryCurrentLocation();
       final notifier = FakeNotificationService();
       final useCase = buildUseCase(
         weather: weather,
-        locations: locations,
+        currentLocation: currentLocation,
         notifier: notifier,
       );
 
@@ -279,8 +276,40 @@ void main() {
       expect(result.handled, isFalse);
       expect(notifier.showCount, 0);
     });
+  test('degrades gracefully when the stored position cannot be read',
+        () async {
+      final weather = FakeWeatherService(bundle: sampleBundle(atUtc: t0));
+      final notifier = FakeNotificationService();
+      final useCase = buildUseCase(
+        weather: weather,
+        currentLocation: InMemoryCurrentLocation()..failReads = true,
+        notifier: notifier,
+      );
+
+      final result = await useCase.check();
+
+      expect(result.handled, isFalse);
+      expect(notifier.showCount, 0);
+    });
+
+    test('checks the stored position rather than a saved location', () async {
+      final weather = FakeWeatherService(bundle: sampleBundle(atUtc: t0));
+      final notifier = FakeNotificationService();
+      final useCase = buildUseCase(
+        weather: weather,
+        currentLocation: InMemoryCurrentLocation(
+          seed: sampleCurrentLocation(
+            latitude: 51.5,
+            longitude: -0.12,
+            label: 'London, England, United Kingdom',
+          ),
+        ),
+        notifier: notifier,
+      );
+
+      await useCase.check();
+
+      expect(weather.lastLocationKey, '51.5,-0.12');
+    });
   });
 }
-
-MonitoredLocationRecord _primaryLocation() =>
-    sampleLocation(id: 1, isPrimary: true);

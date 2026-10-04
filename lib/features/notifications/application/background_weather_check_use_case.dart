@@ -3,9 +3,9 @@ import 'dart:convert';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/logger.dart';
 import '../../../domain/entities/alert_record.dart';
-import '../../../domain/entities/monitored_location_record.dart';
+import '../../../domain/entities/current_location.dart';
 import '../../../domain/repositories/alert_history_repository.dart';
-import '../../../domain/repositories/monitored_location_repository.dart';
+import '../../../domain/repositories/current_location_repository.dart';
 import '../../../domain/repositories/notification_state_repository.dart';
 import '../../../domain/repositories/preference_repository.dart';
 import '../../../domain/services/notification_service.dart';
@@ -26,7 +26,7 @@ class BackgroundCheckResult {
     this.activeHazardCount = 0,
   });
 
-  /// True when a primary location was actually checked.
+  /// True when the device's current position was actually checked.
   final bool handled;
 
   /// Number of alert notifications delivered in this run.
@@ -41,16 +41,21 @@ class BackgroundCheckResult {
       '$notificationsSent, hazards: $activeHazardCount)';
 }
 
-/// Runs the deterministic weather-risk pipeline once for the primary location
-/// and notifies only when a hazard is new, has escalated, or has been silent
-/// past the notification cooldown.
+/// Runs the deterministic weather-risk pipeline once for the device's current
+/// position and notifies only when a hazard is new, has escalated, or has been
+/// silent past the notification cooldown.
+///
+/// The app has no user-saved locations, and a background isolate cannot resolve
+/// GPS, so the position comes from [CurrentLocationRepository]: the fix last
+/// captured while the app was in the foreground. When none has been captured
+/// yet the check is skipped rather than guessing at a location.
 ///
 /// Used by the scheduled background task (workmanager). The engine,
 /// repositories and ingest step are identical to the in-app pipeline, so the
 /// alert path always stays rule-based and never depends on an LLM.
 class BackgroundWeatherCheckUseCase {
   BackgroundWeatherCheckUseCase({
-    required this.locations,
+    required this.currentLocation,
     required this.preferences,
     required this.weather,
     required this.evaluator,
@@ -61,7 +66,7 @@ class BackgroundWeatherCheckUseCase {
     required this.logger,
   });
 
-  final MonitoredLocationRepository locations;
+  final CurrentLocationRepository currentLocation;
   final PreferenceRepository preferences;
   final WeatherService weather;
   final WeatherRiskEvaluator evaluator;
@@ -90,19 +95,19 @@ class BackgroundWeatherCheckUseCase {
       if (!await _notificationsEnabled()) {
         return const BackgroundCheckResult();
       }
-      final primary = await locations.primaryLocation();
-      if (primary == null) {
+      final location = await currentLocation.read();
+      if (location == null) {
         logger.debug(
           'BackgroundWeatherCheck',
-          'no primary location configured; skipping check',
+          'no position captured yet; skipping check',
         );
         return const BackgroundCheckResult();
       }
 
       final bundle = await weather.load(
-        locationKey: primary.locationKey,
-        latitude: primary.latitude,
-        longitude: primary.longitude,
+        locationKey: location.locationKey,
+        latitude: location.latitude,
+        longitude: location.longitude,
       );
       final now = bundle.fetchedAtUtc;
       final analysis = evaluator.analyze(bundle, now: now);
@@ -113,17 +118,17 @@ class BackgroundWeatherCheckUseCase {
       for (final finding in findings) {
         if (!(await _shouldNotify(
           finding,
-          primary,
+          location,
           analysis,
           previousActive,
         ))) {
           continue;
         }
-        await _notify(finding, primary, analysis);
+        await _notify(finding, location, analysis);
         sent++;
       }
 
-      await ingest.ingest(analysis, locationKey: primary.locationKey);
+      await ingest.ingest(analysis, locationKey: location.locationKey);
       return BackgroundCheckResult(
         handled: true,
         notificationsSent: sent,
@@ -145,7 +150,7 @@ class BackgroundWeatherCheckUseCase {
 
   Future<bool> _shouldNotify(
     HazardFinding finding,
-    MonitoredLocationRecord location,
+    CurrentLocation location,
     WeatherAnalysis analysis,
     List<AlertRecord> previousActive,
   ) async {
@@ -174,13 +179,13 @@ class BackgroundWeatherCheckUseCase {
 
   Future<void> _notify(
     HazardFinding finding,
-    MonitoredLocationRecord location,
+    CurrentLocation location,
     WeatherAnalysis analysis,
   ) async {
     final key = _notificationKey(finding, location, analysis);
     final title =
         '${severityLabel(finding.severity)} ${hazardLabel(finding.hazard)} at '
-        '${location.name}';
+        '${location.label}';
     final payload = jsonEncode({
       'fingerprint': evaluator.fingerprintFor(
         finding.hazard,
@@ -199,7 +204,7 @@ class BackgroundWeatherCheckUseCase {
 
   String _notificationKey(
     HazardFinding finding,
-    MonitoredLocationRecord location,
+    CurrentLocation location,
     WeatherAnalysis analysis,
   ) =>
       notificationKeyFor(

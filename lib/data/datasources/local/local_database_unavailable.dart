@@ -23,10 +23,8 @@ class UnavailableLocalDatabase implements LocalDatabase {
     _tables.putIfAbsent('cached_weather', () => <Map<String, Object?>>[]);
     _tables.putIfAbsent('cached_forecast', () => <Map<String, Object?>>[]);
     _tables.putIfAbsent('alert_history', () => <Map<String, Object?>>[]);
-    _tables.putIfAbsent('monitored_locations', () => <Map<String, Object?>>[]);
     _tables.putIfAbsent('user_preferences', () => <Map<String, Object?>>[]);
     _tables.putIfAbsent('notification_state', () => <Map<String, Object?>>[]);
-    _tables.putIfAbsent('sync_state', () => <Map<String, Object?>>[]);
   }
 
   @override

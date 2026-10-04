@@ -17,7 +17,6 @@ class AlertsState {
   const AlertsState({
     required this.status,
     this.active = const [],
-    this.history = const [],
     this.errorMessage,
   });
 
@@ -26,17 +25,20 @@ class AlertsState {
   final AlertsStatus status;
 
   /// Currently live alerts, newest first.
+  ///
+  /// This is the whole list: resolved and expired alerts are still recorded
+  /// locally for deduplication, but they are never shown. The alerts tab
+  /// answers "what is happening now", not "what happened last month".
   final List<AlertRecord> active;
-
-  /// Resolved/expired alerts, most recently updated first.
-  final List<AlertRecord> history;
 
   /// User-safe message for the most recent failure.
   final String? errorMessage;
 
   bool get isReady => status == AlertsStatus.ready;
 
+  /// True when at least one hazard needs the user's attention right now.
+  bool get hasActive => active.isNotEmpty;
+
   @override
-  String toString() => 'AlertsState(active: ${active.length}, '
-      'history: ${history.length})';
+  String toString() => 'AlertsState(active: ${active.length})';
 }

@@ -5,9 +5,9 @@ server-side. Each alert lives in the read-only `server_alerts` collection,
 keyed by the same deterministic hour-bucket fingerprint the mobile client uses,
 so server-generated history and client-side alerts can never diverge.
 
-Phase 12 extends this with **push notification routing**: after regeneration,
+Push notification routing: after regeneration,
 newly-behavior alerts (`detected`/`escalated`) are routed to the FCM tokens of
-every device whose monitored locations include the alert's location, enforcing
+every device whose `locationKeys` include the alert's location, enforcing
 a server-side cooldown.
 
 Official warnings (`official_warnings`) are operator-seeded contracts; there is
@@ -79,10 +79,13 @@ active (`detected`/`escalated`) server alert and hands it to
    `hazard`, `severity`, `status`, `rulesVersion`);
 5. records the delivery timestamp and increments the count.
 
-Client counterpart: `DeviceTokenService` (Flutter) registers the device token
-and keeps its `locationKeys` in sync with the user's monitored locations on
-app start and token rotation; the client's `NotificationAppBootstrap` forwards
-foreground pushes to the local notification tray. Push failures are logged and
+Client counterpart: `DeviceTokenService` (Flutter) registers the device token and
+writes its `locationKeys` from the device's own current position via
+`syncCurrentLocation()` whenever the app captures a fix (or when the FCM token is
+rotated). It holds **at most one** key — the app has no saved places — so a push
+is delivered to exactly the devices standing in the affected area. The client's
+`NotificationAppBootstrap` forwards foreground pushes to the local notification
+tray. Push failures are logged and
 swallowed — a failed send never rolls back alert persistence, and an
 Open-Meteo outage never poisons the schedule.
 
@@ -110,7 +113,7 @@ cleared". This is why trigger failures are logged and swallowed.
 
 ## Region registry
 
-Monitored regions are stored as documents under `public/<regionId>`:
+Regions evaluated server-side are stored as documents under `public/<regionId>`:
 `{ name, latitude, longitude, locationKey, enabled, updatedAtUtc }`.
 
 - `locationKey` defaults to `lat,lng` and must match

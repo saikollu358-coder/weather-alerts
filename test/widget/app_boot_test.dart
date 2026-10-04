@@ -74,8 +74,8 @@ void main() {
         ProviderScope(
           overrides: [
             authRepositoryProvider.overrideWith((ref) => auth),
-            monitoredLocationRepositoryProvider.overrideWith(
-              (ref) => InMemoryMonitoredLocations(),
+            currentLocationRepositoryProvider.overrideWith(
+              (ref) => InMemoryCurrentLocation(),
             ),
             alertHistoryRepositoryProvider.overrideWith(
               (ref) => InMemoryAlertHistory(),
@@ -92,10 +92,14 @@ void main() {
       auth.emit(user);
       await tester.pumpAndSettle();
 
-      // The post-auth shell renders the home tab with the add-location flow.
+      // The post-auth shell renders the home tab, which asks for location
+      // access because the app has no position for this device yet.
       expect(find.text('Weather'), findsWidgets);
       expect(find.byType(NavigationBar), findsOneWidget);
-      expect(find.text('Add a location to start'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('allow_location_button')),
+        findsOneWidget,
+      );
     });
 
     test('AuthState helpers', () {

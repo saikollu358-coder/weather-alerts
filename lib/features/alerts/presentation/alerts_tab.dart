@@ -4,69 +4,37 @@ import 'package:intl/intl.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/alert_record.dart';
-import '../../../domain/entities/alert_status.dart';
 import '../../../services/weather_analysis/weather_severity.dart';
 import '../application/alerts_controller.dart';
 import '../application/alerts_providers.dart';
 import '../application/alerts_state.dart';
 import 'alert_severity_colors.dart';
 
-/// Alerts tab of the dashboard shell: live alerts + resolved/expired history
+/// Alerts tab of the dashboard shell: the alerts that are active right now,
 /// backed by [alertsControllerProvider].
-class AlertsTab extends ConsumerStatefulWidget {
+class AlertsTab extends ConsumerWidget {
   const AlertsTab({super.key});
 
   @override
-  ConsumerState<AlertsTab> createState() => _AlertsTabState();
-}
-
-class _AlertsTabState extends ConsumerState<AlertsTab> {
-  bool _showHistory = false;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final state = ref.watch(alertsControllerProvider);
     final notifier = ref.read(alertsControllerProvider.notifier);
 
     return Column(
       children: [
-        _AlertSummaryBar(activeCount: state.active.length, scheme: scheme),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(
-                  value: false,
-                  label: Text('Active'),
-                  icon: Icon(Icons.notifications_active_outlined),
-                ),
-                ButtonSegment(
-                  value: true,
-                  label: Text('History'),
-                  icon: Icon(Icons.history),
-                ),
-              ],
-              selected: {_showHistory},
-              onSelectionChanged: (selection) =>
-                  setState(() => _showHistory = selection.first),
-            ),
-          ),
-        ),
-        Expanded(child: _buildBody(context, state, notifier)),
+        _AlertSummaryBar(activeCount: state.active.length),
+        Expanded(child: _buildBody(context, theme, state, notifier)),
       ],
     );
   }
 
   Widget _buildBody(
     BuildContext context,
+    ThemeData theme,
     AlertsState state,
     AlertsController notifier,
   ) {
-    final theme = Theme.of(context);
     switch (state.status) {
       case AlertsStatus.loading:
         return const Center(child: CircularProgressIndicator());
@@ -96,15 +64,12 @@ class _AlertsTabState extends ConsumerState<AlertsTab> {
           ),
         );
       case AlertsStatus.ready:
-        final records =
-            _showHistory ? state.history : state.active;
+        final records = state.active;
         if (records.isEmpty) {
-          return _EmptyAlerts(
-            icon:
-                _showHistory ? Icons.history : Icons.notifications_active_outlined,
-            message: _showHistory
-                ? 'No finished alerts recorded yet.'
-                : 'No active alerts. Check back when weather changes.',
+          return const _EmptyAlerts(
+            icon: Icons.notifications_active_outlined,
+            message: 'No active alerts. We will warn you here when hazardous '
+                'weather reaches your current location.',
           );
         }
         return RefreshIndicator(
@@ -113,14 +78,11 @@ class _AlertsTabState extends ConsumerState<AlertsTab> {
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             itemCount: records.length,
             separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) => _showHistory
-                ? _HistoryAlertCard(record: records[index])
-                : _ActiveAlertCard(
-                    record: records[index],
-                    onAcknowledge: () => notifier.acknowledge(
-                      records[index].fingerprint,
-                    ),
-                  ),
+            itemBuilder: (context, index) => _ActiveAlertCard(
+              record: records[index],
+              onAcknowledge: () =>
+                  notifier.acknowledge(records[index].fingerprint),
+            ),
           ),
         );
     }
@@ -128,14 +90,14 @@ class _AlertsTabState extends ConsumerState<AlertsTab> {
 }
 
 class _AlertSummaryBar extends StatelessWidget {
-  const _AlertSummaryBar({required this.activeCount, required this.scheme});
+  const _AlertSummaryBar({required this.activeCount});
 
   final int activeCount;
-  final ColorScheme scheme;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Container(
       width: double.infinity,
       color: scheme.surfaceContainerLow,
@@ -145,13 +107,20 @@ class _AlertSummaryBar extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.warning_amber_rounded,
-                  size: 20, color: scheme.primary),
+              Icon(
+                activeCount == 0
+                    ? Icons.check_circle_outline
+                    : Icons.warning_amber_rounded,
+                size: 20,
+                color: activeCount == 0 ? scheme.primary : scheme.error,
+              ),
               const SizedBox(width: 8),
-Text(
-                  '$activeCount active alert${activeCount == 1 ? '' : 's'}',
-                  style: theme.textTheme.titleMedium,
-                ),
+              Text(
+                activeCount == 0
+                    ? 'No active alerts'
+                    : '$activeCount active alert${activeCount == 1 ? '' : 's'}',
+                style: theme.textTheme.titleMedium,
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -217,40 +186,6 @@ class _ActiveAlertCard extends StatelessWidget {
                 child: const Text('Acknowledge'),
               ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HistoryAlertCard extends StatelessWidget {
-  const _HistoryAlertCard({required this.record});
-
-  final AlertRecord record;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final status = record.status;
-    final isExpired = status == AlertStatus.expired;
-    return Card(
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: theme.colorScheme.surfaceContainerHighest,
-          child: Icon(
-            isExpired ? Icons.history : Icons.check_circle_outline,
-            size: 20,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-        title: Text(record.title, style: theme.textTheme.titleSmall),
-        subtitle: Text(
-          DateFormat('MMM d, HH:mm').format(
-              (record.resolvedAtUtc ?? record.updatedAtUtc).toLocal()),
-        ),
-        trailing: Chip(
-          label: Text(isExpired ? 'Expired' : 'Resolved'),
-          visualDensity: VisualDensity.compact,
         ),
       ),
     );
