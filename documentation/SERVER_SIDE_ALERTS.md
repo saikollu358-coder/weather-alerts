@@ -89,6 +89,10 @@ tray. Push failures are logged and
 swallowed — a failed send never rolls back alert persistence, and an
 Open-Meteo outage never poisons the schedule.
 
+Tapping one of these pushes opens the in-app alert detail route
+(`/alerts/:id`) via `AlertTapController`, which consumes the same
+`fingerprint` key — see `NOTIFICATIONS_BACKGROUND_MONITORING.md#tapping-a-notification`.
+
 **Scale note:** `findDevicesForLocation` currently scans `users/{uid}/devices`
 per location key. For larger user bases this should be replaced with a
 fan-out `device_tokens/{tokenId}` collection queried with `array-contains` —

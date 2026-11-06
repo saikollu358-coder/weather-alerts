@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/widgets/app_motion.dart';
 import '../../../domain/entities/alert_record.dart';
 import '../../../services/weather_analysis/weather_severity.dart';
 import '../application/alerts_controller.dart';
@@ -24,7 +25,37 @@ class AlertsTab extends ConsumerWidget {
     return Column(
       children: [
         _AlertSummaryBar(activeCount: state.active.length),
-        Expanded(child: _buildBody(context, theme, state, notifier)),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: AppMotion.standard,
+            switchInCurve: AppMotion.enter,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.03),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            ),
+            // Keep both states full-size while they cross-fade, so the spinner
+            // and the list do not jump to a different alignment mid-transition.
+            layoutBuilder: (currentChild, previousChildren) => Stack(
+              fit: StackFit.expand,
+              alignment: Alignment.topCenter,
+              children: <Widget>[
+                ...previousChildren,
+                ?currentChild,
+              ],
+            ),
+            child: KeyedSubtree(
+              key: ValueKey('${state.status}-${state.errorMessage}'),
+              child: _buildBody(context, theme, state, notifier),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -37,29 +68,46 @@ class AlertsTab extends ConsumerWidget {
   ) {
     switch (state.status) {
       case AlertsStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const Center(
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+        );
       case AlertsStatus.error:
         return Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error_outline,
-                    size: 48, color: theme.colorScheme.error),
-                const SizedBox(height: 12),
-                Text(
-                  state.errorMessage ?? 'Something went wrong.',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: notifier.refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
-                ),
-              ],
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedEntrance(
+                    beginScale: 0.9,
+                    child: Icon(Icons.error_outline,
+                        size: 48, color: theme.colorScheme.error),
+                  ),
+                  const SizedBox(height: 12),
+                  AnimatedEntrance(
+                    delay: AppMotion.staggerFor(1),
+                    child: Text(
+                      state.errorMessage ?? 'Something went wrong.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  AnimatedEntrance(
+                    delay: AppMotion.staggerFor(2),
+                    child: FilledButton.icon(
+                      onPressed: notifier.refresh,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Try again'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -78,10 +126,18 @@ class AlertsTab extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             itemCount: records.length,
             separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) => _ActiveAlertCard(
-              record: records[index],
-              onAcknowledge: () =>
-                  notifier.acknowledge(records[index].fingerprint),
+            itemBuilder: (context, index) => AnimatedEntrance(
+              // Alert identities are stable (fingerprint), so an item that
+              // survives a refresh is not re-animated from scratch.
+              key: ValueKey(records[index].fingerprint),
+              delay: AppMotion.staggerFor(index),
+              beginOffset: const Offset(0, 0.06),
+              beginScale: 0.96,
+              child: _ActiveAlertCard(
+                record: records[index],
+                onAcknowledge: () =>
+                    notifier.acknowledge(records[index].fingerprint),
+              ),
             ),
           ),
         );
@@ -98,36 +154,72 @@ class _AlertSummaryBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Container(
+    final hasAlerts = activeCount > 0;
+    // Tint tracks the state so the bar itself carries the signal; the wording
+    // beside it still states the situation in words.
+    final background =
+        hasAlerts ? scheme.errorContainer : scheme.surfaceContainerLow;
+    final onBackground =
+        hasAlerts ? scheme.onErrorContainer : scheme.onSurface;
+
+    return AnimatedContainer(
+      duration: AppMotion.standard,
+      curve: AppMotion.enter,
       width: double.infinity,
-      color: scheme.surfaceContainerLow,
+      color: background,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                activeCount == 0
-                    ? Icons.check_circle_outline
-                    : Icons.warning_amber_rounded,
-                size: 20,
-                color: activeCount == 0 ? scheme.primary : scheme.error,
+              AnimatedSwitcher(
+                duration: AppMotion.standard,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(
+                    scale: Tween<double>(begin: 0.6, end: 1).animate(animation),
+                    child: child,
+                  ),
+                ),
+                child: Icon(
+                  hasAlerts
+                      ? Icons.warning_amber_rounded
+                      : Icons.check_circle_outline,
+                  key: ValueKey(hasAlerts),
+                  size: 20,
+                  color: hasAlerts ? scheme.error : scheme.primary,
+                ),
               ),
               const SizedBox(width: 8),
-              Text(
-                activeCount == 0
-                    ? 'No active alerts'
-                    : '$activeCount active alert${activeCount == 1 ? '' : 's'}',
-                style: theme.textTheme.titleMedium,
+              // The count is rendered as text, never as colour alone.
+              PopOnChange(
+                identity: activeCount,
+                beginScale: 0.92,
+                duration: AppMotion.standard,
+                child: Text(
+                  activeCount == 0
+                      ? 'No active alerts'
+                      : '$activeCount active alert${activeCount == 1 ? '' : 's'}',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: onBackground,
+                  ),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            AppConstants.assessmentDisclaimer,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+          AnimatedSwitcher(
+            duration: AppMotion.quick,
+            child: Text(
+              AppConstants.assessmentDisclaimer,
+              key: ValueKey(onBackground.toARGB32()),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: hasAlerts
+                    ? scheme.onErrorContainer
+                    : scheme.onSurfaceVariant,
+              ),
+            ),
           ),
         ],
       ),
@@ -147,45 +239,64 @@ class _ActiveAlertCard extends StatelessWidget {
     final severity = WeatherSeverity.tryParse(record.severity);
     final color = alertSeverityColor(severity ?? WeatherSeverity.none);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.15),
-              child: Icon(Icons.warning_amber_rounded,
-                  color: color, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(record.title, style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  Text(
-                    record.reason,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Detected ${DateFormat('MMM d, HH:mm').format(record.detectedAtUtc.toLocal())}',
-                    style: theme.textTheme.labelSmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                ],
+    return PressableScale(
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AnimatedContainer(
+                duration: AppMotion.standard,
+                curve: AppMotion.enter,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(10),
+                child: Icon(Icons.warning_amber_rounded,
+                    color: color, size: 20),
               ),
-            ),
-            if (!record.acknowledged)
-              TextButton(
-                onPressed: onAcknowledge,
-                child: const Text('Acknowledge'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: AppMotion.quick,
+                      child: Text(
+                        record.title,
+                        key: ValueKey(record.title),
+                        style: theme.textTheme.titleSmall,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      record.reason,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    AnimatedOpacity(
+                      duration: AppMotion.standard,
+                      opacity: record.acknowledged ? 0.6 : 1,
+                      child: Text(
+                        'Detected ${DateFormat('MMM d, HH:mm').format(record.detectedAtUtc.toLocal())}',
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-          ],
+              if (!record.acknowledged)
+                TextButton(
+                  onPressed: onAcknowledge,
+                  child: const Text('Acknowledge'),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -202,13 +313,82 @@ class _EmptyAlerts extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 48, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(height: 12),
-          Text(message, textAlign: TextAlign.center),
-        ],
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedEntrance(
+                beginScale: 0.8,
+                child: _AllClearGlyph(
+                  icon: icon,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              AnimatedEntrance(
+                delay: AppMotion.staggerFor(1),
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Empty-state icon inside a ring that draws itself once.
+///
+/// A finite, single pass: an endlessly pulsing "all clear" would compete with
+/// real alerts for attention every time the list is legitimately empty.
+class _AllClearGlyph extends StatelessWidget {
+  const _AllClearGlyph({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (AppMotion.isReducedMotion(context)) {
+      return Icon(icon, size: 48, color: color);
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: AppMotion.relaxed,
+      curve: AppMotion.enter,
+      builder: (context, value, _) => SizedBox(
+        width: 96,
+        height: 96,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (value > 0)
+              Transform.scale(
+                scale: value,
+                child: Opacity(
+                  opacity: 1 - value,
+                  child: Container(
+                    width: 88,
+                    height: 88,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: color.withValues(alpha: 0.12),
+                    ),
+                  ),
+                ),
+              ),
+            Transform.scale(
+              scale: 0.85 + 0.15 * value,
+              child: Icon(icon, size: 48, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }

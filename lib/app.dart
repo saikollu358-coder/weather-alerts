@@ -19,7 +19,10 @@ class WeatherAlertsApp extends StatelessWidget {
           routerConfig: router,
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
-          themeMode: ThemeMode.system,
+          // The dashboard is built on the dark navy tokens in WeatherPalette,
+          // so following the system setting would render the tabs against a
+          // light canvas while the shell stays dark. Dark is the design.
+          themeMode: ThemeMode.dark,
           debugShowCheckedModeBanner: false,
         );
       },

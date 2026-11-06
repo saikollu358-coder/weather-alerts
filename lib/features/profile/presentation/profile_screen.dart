@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/theme/weather_palette.dart';
 import '../../../core/validation/validators.dart';
 import '../../../domain/entities/auth_user.dart';
 import '../../../routing/app_routes.dart';
@@ -24,129 +25,133 @@ class ProfileScreen extends ConsumerWidget {
     final user = auth.user;
     final isCloud = user != null && !user.isLocalGuest;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Profile')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  CircleAvatar(
-                    radius: 36,
-                    child: Text(
-                      (user?.displayName.isNotEmpty ?? false)
-                          ? user!.displayName.substring(0, 1).toUpperCase()
-                          : '?',
-                      style: theme.textTheme.headlineMedium,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          user?.displayName ?? 'No profile',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.titleLarge,
-                        ),
-                      ),
-                      if (isCloud)
-                        IconButton(
-                          key: const ValueKey('edit_profile_button'),
-                          icon: const Icon(Icons.edit_outlined),
-                          tooltip: 'Edit name',
-                          onPressed: () =>
-                              _showEditNameDialog(context, ref, user),
-                        ),
-                    ],
-                  ),
-                  if (user?.email != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        user!.email!,
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isCloud
-                          ? scheme.secondaryContainer
-                          : scheme.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      isCloud
-                          ? 'Cloud account'
-                          : 'Local mode — no cloud account',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: isCloud
-                            ? scheme.onSecondaryContainer
-                            : scheme.onTertiaryContainer,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: ListTile(
-              key: const ValueKey('open_settings_row'),
-              leading: const Icon(Icons.settings_outlined),
-              title: const Text('Notifications & settings'),
-              subtitle: const Text(
-                'Alert preferences, permissions and app settings',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push(RoutePath.settings),
-            ),
-          ),
-          const SizedBox(height: 24),
-          if (!isCloud)
+    return DecoratedBox(
+      decoration: const BoxDecoration(gradient: WeatherPalette.canvasGradient),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(title: const Text('Profile')),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(
-                  'This build has no Firebase configuration, so you are in '
-                  'local-only mode. Your weather data stays on this device, '
-                  'and profile editing requires a cloud account.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+                child: Column(
+                  children: [
+                    CircleAvatar(
+                      radius: 36,
+                      child: Text(
+                        (user?.displayName.isNotEmpty ?? false)
+                            ? user!.displayName.substring(0, 1).toUpperCase()
+                            : '?',
+                        style: theme.textTheme.headlineMedium,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            user?.displayName ?? 'No profile',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                        if (isCloud)
+                          IconButton(
+                            key: const ValueKey('edit_profile_button'),
+                            icon: const Icon(Icons.edit_outlined),
+                            tooltip: 'Edit name',
+                            onPressed: () =>
+                                _showEditNameDialog(context, ref, user),
+                          ),
+                      ],
+                    ),
+                    if (user?.email != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          user!.email!,
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isCloud
+                            ? scheme.secondaryContainer
+                            : scheme.tertiaryContainer,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        isCloud
+                            ? 'Cloud account'
+                            : 'Local mode — no cloud account',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: isCloud
+                              ? scheme.onSecondaryContainer
+                              : scheme.onTertiaryContainer,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            )
-          else
-            FilledButton.icon(
-              key: const ValueKey('logout_button'),
-              onPressed: () =>
-                  ref.read(authControllerProvider.notifier).logout(),
-              icon: const Icon(Icons.logout),
-              label: const Text('Sign out'),
             ),
-          const SizedBox(height: 16),
-          Text(
-            AppConstants.assessmentDisclaimer,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                key: const ValueKey('open_settings_row'),
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('Notifications & settings'),
+                subtitle: const Text(
+                  'Alert preferences, permissions and app settings',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push(RoutePath.settings),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 24),
+            if (!isCloud)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'This build has no Firebase configuration, so you are in '
+                    'local-only mode. Your weather data stays on this device, '
+                    'and profile editing requires a cloud account.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              )
+            else
+              FilledButton.icon(
+                key: const ValueKey('logout_button'),
+                onPressed: () =>
+                    ref.read(authControllerProvider.notifier).logout(),
+                icon: const Icon(Icons.logout),
+                label: const Text('Sign out'),
+              ),
+            const SizedBox(height: 16),
+            Text(
+              AppConstants.assessmentDisclaimer,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -170,8 +175,9 @@ class _EditNameDialog extends StatefulWidget {
 }
 
 class _EditNameDialogState extends State<_EditNameDialog> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.user.name ?? '');
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.user.name ?? '',
+  );
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   bool _saving = false;
 

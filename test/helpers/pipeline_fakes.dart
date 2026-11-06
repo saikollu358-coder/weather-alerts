@@ -210,6 +210,10 @@ class InMemoryAlertHistory implements AlertHistoryRepository {
   /// error paths deterministically.
   bool failLoads = false;
 
+  /// When set, single-record lookups throw so the detail screen's error path
+  /// can be exercised.
+  bool failLookups = false;
+
   @override
   Future<void> upsertAlert(AlertRecord alert) async {
     final index =
@@ -223,6 +227,7 @@ class InMemoryAlertHistory implements AlertHistoryRepository {
 
   @override
   Future<AlertRecord?> alertByFingerprint(String fingerprint) async {
+    if (failLookups) throw StateError('boom');
     for (final record in _records) {
       if (record.fingerprint == fingerprint) return record;
     }
@@ -416,6 +421,15 @@ class FakeNotificationService implements NotificationService {
   /// When true, the next [requestPermission] grants and flips [permission].
   bool grantOnRequest = false;
 
+  final StreamController<String> _opened =
+      StreamController<String>.broadcast();
+
+  /// Payloads handed back through [onOpenedPayloads], i.e. simulated taps.
+  Stream<String> get opened => _opened.stream;
+
+  /// Simulates the user tapping a delivered notification.
+  void openPayload(String payload) => _opened.add(payload);
+
   @override
   Future<bool> requestPermission() async {
     requestPermissionCalled = true;
@@ -447,7 +461,10 @@ class FakeNotificationService implements NotificationService {
   }
 
   @override
-  Stream<String> onOpenedPayloads() => const Stream.empty();
+  Stream<String> onOpenedPayloads() => _opened.stream;
+
+  /// Releases the tap stream; call from `addTearDown` when emitting taps.
+  void disposeOpenedStream() => _opened.close();
 }
 
 /// In-memory [NotificationStateRepository] honoring cooldown semantics.

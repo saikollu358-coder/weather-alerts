@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/theme/weather_palette.dart';
 import '../../notifications/application/notification_settings_providers.dart';
 import '../../notifications/application/notification_settings_state.dart';
 import '../../../domain/enums/notification_permission.dart';
@@ -18,82 +19,86 @@ class SettingsScreen extends ConsumerWidget {
     final scheme = theme.colorScheme;
     final error = settings.errorMessage;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            'Notifications',
-            style: theme.textTheme.titleSmall?.copyWith(
-              color: scheme.primary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: SwitchListTile(
-              key: const ValueKey('notifications_switch'),
-              title: const Text('Weather risk alerts'),
-              subtitle: const Text(
-                'Deliver alerts for hazards at your monitored locations. '
-                '${AppConstants.assessmentDisclaimer}',
+    return DecoratedBox(
+      decoration: const BoxDecoration(gradient: WeatherPalette.canvasGradient),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(title: const Text('Settings')),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              'Notifications',
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: scheme.primary,
               ),
-              value: settings.enabled && !settings.isLoading,
-              onChanged: settings.isLoading
-                  ? null
-                  : (value) => ref
-                      .read(notificationSettingsControllerProvider.notifier)
-                      .toggleEnabled(value),
             ),
-          ),
-          if (!settings.isLoading) _PermissionPanel(settings: settings),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                error,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.error,
+            const SizedBox(height: 8),
+            Card(
+              child: SwitchListTile(
+                key: const ValueKey('notifications_switch'),
+                title: const Text('Weather risk alerts'),
+                subtitle: const Text(
+                  'Deliver alerts for hazards at your monitored locations. '
+                  '${AppConstants.assessmentDisclaimer}',
+                ),
+                value: settings.enabled && !settings.isLoading,
+                onChanged: settings.isLoading
+                    ? null
+                    : (value) => ref
+                          .read(notificationSettingsControllerProvider.notifier)
+                          .toggleEnabled(value),
+              ),
+            ),
+            if (!settings.isLoading) _PermissionPanel(settings: settings),
+            if (error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  error,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.error,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 24),
+            Text(
+              'About',
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppConstants.appName,
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      AppConstants.tagline,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      AppConstants.assessmentDisclaimer,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-          const SizedBox(height: 24),
-          Text(
-            'About',
-            style: theme.textTheme.titleSmall?.copyWith(
-              color: scheme.primary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    AppConstants.appName,
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    AppConstants.tagline,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    AppConstants.assessmentDisclaimer,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -108,8 +113,9 @@ class _PermissionPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final controller =
-        ref.read(notificationSettingsControllerProvider.notifier);
+    final controller = ref.read(
+      notificationSettingsControllerProvider.notifier,
+    );
 
     switch (settings.permission) {
       case NotificationPermissionStatus.granted:
@@ -118,8 +124,9 @@ class _PermissionPanel extends ConsumerWidget {
             leading: Icon(Icons.check_circle, color: scheme.primary),
             title: const Text('Notifications are active'),
             subtitle: const Text(
-                'The system permission is granted. Alerts will reach the '
-                'notification tray.'),
+              'The system permission is granted. Alerts will reach the '
+              'notification tray.',
+            ),
           ),
         );
       case NotificationPermissionStatus.denied:
@@ -131,8 +138,10 @@ class _PermissionPanel extends ConsumerWidget {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.notifications_off_outlined,
-                        color: scheme.onSurfaceVariant),
+                    Icon(
+                      Icons.notifications_off_outlined,
+                      color: scheme.onSurfaceVariant,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(

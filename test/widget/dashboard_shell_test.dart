@@ -165,4 +165,46 @@ void main() {
     expect(find.text('Turn on location'), findsNothing);
     expect(find.text('Try again'), findsOneWidget);
   });
+
+  // The shell switches chrome at a breakpoint. Both layouts must render the
+  // weather tab without overflowing the viewport, and the breakpoint must swap
+  // one navigation surface for the other rather than showing both.
+  for (final size in <Size>[const Size(1440, 1100), const Size(420, 1000)]) {
+    testWidgets('renders without overflow at $size', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        _wrap(
+          location: FakeLocationService(
+            fix: geoPosition(42.1234, -71.9876),
+            permission: LocationPermissionStatus.granted,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final wide = size.width >= 900;
+      expect(find.byType(NavigationBar), wide ? findsNothing : findsOneWidget);
+      expect(find.text('MENU'), wide ? findsOneWidget : findsNothing);
+
+      // The navigation surface the layout does show must keep its test keys.
+      if (wide) {
+        await tester.tap(find.text('Alerts'), warnIfMissed: false);
+        await tester.pumpAndSettle();
+        expect(find.text('No active alerts'), findsOneWidget);
+        await tester.tap(find.text('Hourly'), warnIfMissed: false);
+        await tester.pumpAndSettle();
+      } else {
+        await tester.tap(find.byKey(const ValueKey('nav_alerts')));
+        await tester.pumpAndSettle();
+        expect(find.text('No active alerts'), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('nav_weather')));
+        await tester.pumpAndSettle();
+      }
+      expect(find.textContaining('Last updated:'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

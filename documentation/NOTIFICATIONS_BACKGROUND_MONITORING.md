@@ -89,9 +89,34 @@ bypass, re-detection after resolution, and weather-failure degradation.
 `test/widget/notification_permission_banner_test.dart` cover the Phase 11
 settings + prompt surfaces.
 
+## Tapping a notification
+
+A tap is a *navigation hint*, never a safety decision: nothing in this path
+re-evaluates whether a condition is hazardous.
+
+| File | Responsibility |
+| --- | --- |
+| `features/alerts/application/alert_tap_payload.dart` | `AlertTapPayload`: lenient parser for both payload producers (JSON from the background check, string-only FCM `data` map from `functions/src/server_alerts/push_router.ts`). Values are trimmed; an id-less or unparsable payload yields `hasAlert == false` instead of throwing. |
+| `features/alerts/application/alert_tap_controller.dart` | `AlertTapController` (Notifier): subscribes to all three tap entrypoints — `NotificationService.onOpenedPayloads()`, `FcmService.onMessageOpenedApp()` and the one-shot `FcmService.getInitialMessage()` (cold start). Holds only *which* alert was tapped; `consume()` clears it. FCM guards degrade to empty streams, so the local-only build takes the same safe path. |
+| `features/alerts/application/alert_detail_providers.dart` | `alertDetailProvider(fingerprint)` (repository lookup, `null` when the alert is no longer stored) and `acknowledgeAlertProvider`, which invalidates the detail view *and* `alertsControllerProvider` so the alerts tab cannot show a stale "Acknowledge" button. |
+| `features/alerts/presentation/alert_detail_screen.dart` | Detail view: severity-tinted header, status/severity chips, "Why this was flagged", measured reading, timestamps, the assessment disclaimer, and Acknowledge. A missing record explains itself; a failed lookup offers a retry. |
+| `routing/app_routes.dart` / `routing/app_router.dart` | `/alerts/:id` (`RouteName.alertDetails`), behind the existing auth guard. `RoutePath.alertDetailsFor` percent-encodes the id: fingerprints contain `:` and `,` (e.g. `v8:Thunderstorm:42.123,-71.988:2026-09-06T12:00:00.000Z`) and would otherwise be ambiguous inside a path segment. go_router decodes the parameter again. |
+| `features/dashboard/presentation/dashboard_shell.dart` | Performs the navigation. A tap that arrived before the shell existed (cold start) is opened on the first frame; every tap is consumed before pushing, so a rebuild cannot re-open a detail screen behind the user's back. The route is pushed, not replaced, so back returns to the dashboard. |
+
+Tapping is safe in all three launch states: foreground/background taps arrive on
+the local-notification stream, a cold start arrives on `getInitialMessage()`, and
+until the user authenticates the guard keeps the detail route unreachable — the
+pending fingerprint simply waits in `AlertTapController`.
+
+### Testing
+
+`test/unit/alert_tap_payload_test.dart` and
+`test/unit/alert_tap_controller_test.dart` cover payload parsing and the three
+tap entrypoints; `test/widget/alert_detail_screen_test.dart` covers route
+encoding/decoding, every detail-screen state, and end-to-end tap navigation
+(including a tap that precedes the dashboard and a tap for an unknown alert).
+
 ## Later phases (intentionally deferred)
 
-- Navigating from a tapped notification (`onOpenedPayloads`) to the alert
-  detail route.
 - Server-driven alerts (`functions/`) forwarded via FCM; this bootstrap already
   forwards compatible foreground pushes to the tray.

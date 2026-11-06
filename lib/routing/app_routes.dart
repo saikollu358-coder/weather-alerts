@@ -20,7 +20,13 @@ abstract final class RoutePath {
   static const String alertHistory = '/alerts/history';
 
   /// Builds an [alertDetails] path for the given alert id.
-  static String alertDetailsFor(String alertId) => '/alerts/$alertId';
+  ///
+  /// Alert fingerprints contain `:` and `,` (for example
+  /// `v8:Thunderstorm:42.123,-71.988:2026-10-05T14:00:00.000Z`), so the id is
+  /// percent-encoded to keep the path a single, unambiguous segment. go_router
+  /// decodes path parameters again, so the screen still receives the raw id.
+  static String alertDetailsFor(String alertId) =>
+      '/alerts/${Uri.encodeComponent(alertId)}';
 }
 
 abstract final class RouteName {

@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../core/theme/weather_palette.dart';
 import '../../../domain/entities/current_location.dart';
 import '../../../services/weather_maps/weather_map_layers.dart';
 import '../../../services/weather_maps/weather_map_providers.dart';
@@ -146,9 +147,9 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
             CircleMarker(
               point: center,
               radius: accuracy,
-              color: Colors.blue.withValues(alpha: 0.12),
+              color: WeatherPalette.blue.withValues(alpha: 0.16),
               borderStrokeWidth: 1,
-              borderColor: Colors.blue.withValues(alpha: 0.4),
+              borderColor: WeatherPalette.blue.withValues(alpha: 0.45),
             ),
           ],
         ),
@@ -161,7 +162,7 @@ class _LocationsMapViewState extends ConsumerState<LocationsMapView> {
             child: const Icon(
               Icons.my_location,
               key: ValueKey('my_location_marker'),
-              color: Colors.blue,
+              color: WeatherPalette.cyan,
               size: 24,
             ),
           ),

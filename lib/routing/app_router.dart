@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/alerts/presentation/alert_detail_screen.dart';
 import '../features/authentication/application/auth_providers.dart';
 import '../features/authentication/application/auth_state.dart';
 import '../features/authentication/presentation/screens/forgot_password_screen.dart';
@@ -58,6 +59,16 @@ class AppRouter {
           path: RoutePath.home,
           name: RouteName.home,
           builder: (context, state) => const DashboardShell(),
+        ),
+        GoRoute(
+          // Notification taps land here. The id is a fingerprint containing ':'
+          // and ',', which RoutePath.alertDetailsFor percent-encodes; go_router
+          // hands the decoded value back in pathParameters.
+          path: RoutePath.alertDetails,
+          name: RouteName.alertDetails,
+          builder: (context, state) => AlertDetailScreen(
+            fingerprint: state.pathParameters['id'] ?? '',
+          ),
         ),
         GoRoute(
           path: RoutePath.profile,
